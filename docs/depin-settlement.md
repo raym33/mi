@@ -119,6 +119,14 @@ Challenge events are a separate tamper-evident chain for provider benchmarking a
 challenges:
   enabled: true
   path: "data/challenge-chain.jsonl"
+  auto_run: true
+  interval: "15m"
+  timeout: "30s"
+  model: "llama3.1:8b"
+  privacy_tier: "public"
+  prompt: "Reply with exactly: mi-ok"
+  expected_contains: "mi-ok"
+  max_tokens: 8
 ```
 
 Record a manual challenge result:
@@ -138,6 +146,18 @@ curl -X POST http://localhost:8080/admin/challenges \
   }'
 ```
 
+Run one synthetic challenge immediately:
+
+```bash
+curl -X POST http://localhost:8080/admin/challenges/run \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "llama3.1:8b",
+    "expected_contains": "mi-ok"
+  }'
+```
+
 Inspect and verify challenges:
 
 ```bash
@@ -148,7 +168,7 @@ curl http://localhost:8080/admin/challenges/verify \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
-Challenge summaries feed provider reputation. Providers with weak pass rates or low challenge scores receive lower reputation until their later performance improves.
+Challenge summaries feed provider reputation. Providers with weak pass rates or low challenge scores receive lower reputation until their later performance improves. Synthetic challenge records store pass/fail, score, node, provider, latency, and hash links, not model output.
 
 ## Payment roadmap
 

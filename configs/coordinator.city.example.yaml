@@ -35,6 +35,14 @@ settlement:
 challenges:
   enabled: true
   path: "data/challenge-chain.jsonl"
+  auto_run: true
+  interval: "15m"
+  timeout: "30s"
+  model: "llama3.1:8b"
+  privacy_tier: "public"
+  prompt: "Reply with exactly: mi-ok"
+  expected_contains: "mi-ok"
+  max_tokens: 8
 models:
   aliases:
     - id: "fast"

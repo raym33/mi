@@ -221,6 +221,15 @@ curl http://localhost:8080/admin/challenges \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
+Run a synthetic challenge against the active network:
+
+```bash
+curl -X POST http://localhost:8080/admin/challenges/run \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"llama3.1:8b","expected_contains":"mi-ok"}'
+```
+
 The example config writes usage to `data/city-usage.json`. Keep that file backed up if it represents real credits.
 The example settlement chain writes to `data/settlement-chain.jsonl`. Back it up and periodically anchor its latest hash externally if rewards represent real money.
 The example challenge chain writes to `data/challenge-chain.jsonl`.

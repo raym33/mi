@@ -60,8 +60,16 @@ type SettlementConfig struct {
 }
 
 type ChallengeConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Path    string `yaml:"path"`
+	Enabled          bool     `yaml:"enabled"`
+	Path             string   `yaml:"path"`
+	AutoRun          bool     `yaml:"auto_run"`
+	Interval         Duration `yaml:"interval"`
+	Timeout          Duration `yaml:"timeout"`
+	Model            string   `yaml:"model"`
+	PrivacyTier      string   `yaml:"privacy_tier"`
+	Prompt           string   `yaml:"prompt"`
+	ExpectedContains string   `yaml:"expected_contains"`
+	MaxTokens        int      `yaml:"max_tokens"`
 }
 
 type ModelConfig struct {

@@ -23,6 +23,14 @@ settlement:
 challenges:
   enabled: false
   path: ""
+  auto_run: false
+  interval: "10m"
+  timeout: "30s"
+  model: ""
+  privacy_tier: "public"
+  prompt: "Reply with a short health-check token."
+  expected_contains: ""
+  max_tokens: 12
 models:
   aliases:
     - id: "fast"

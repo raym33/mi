@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/raym33/mi/internal/challenge"
 	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/config"
 	"github.com/raym33/mi/internal/modelcatalog"
@@ -166,6 +167,45 @@ func TestChatRejectsInvalidPrivacyTier(t *testing.T) {
 	}
 }
 
+func TestRunSyntheticChallengeRecordsProviderEvidence(t *testing.T) {
+	market, err := city.New(config.CityConfig{}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	challenges, err := challenge.New(config.ChallengeConfig{Enabled: true})
+	if err != nil {
+		t.Fatalf("new challenges: %v", err)
+	}
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{
+		NodeID:      "node-a",
+		ProviderID:  "provider-a",
+		Models:      []string{"llama3.1:8b"},
+		PrivacyMode: "private",
+	}, challengeNodeConn{content: "mi-ok"})
+	s := &server{
+		registry:     registry,
+		market:       market,
+		modelCatalog: modelcatalog.New(config.ModelConfig{}),
+		challenges:   challenges,
+	}
+
+	event, err := s.runSyntheticChallenge(context.Background(), config.ChallengeConfig{
+		Model:            "llama3.1:8b",
+		ExpectedContains: "mi-ok",
+		MaxTokens:        4,
+	})
+	if err != nil {
+		t.Fatalf("run challenge: %v", err)
+	}
+	if !event.Passed || event.ProviderID != "provider-a" || event.NodeID != "node-a" || event.Score != 100 {
+		t.Fatalf("event = %+v, want passing provider evidence", event)
+	}
+	if snapshot := challenges.Snapshot(10); snapshot.Events != 1 || len(snapshot.Summaries) != 1 || snapshot.Summaries[0].PassRateBPS != 10000 {
+		t.Fatalf("snapshot = %+v, want one perfect summary", snapshot)
+	}
+}
+
 type noopNodeConn struct{}
 
 func (noopNodeConn) SendInference(context.Context, string, protocol.InferRequest, scheduler.StreamSink) (protocol.InferDone, error) {
@@ -173,6 +213,23 @@ func (noopNodeConn) SendInference(context.Context, string, protocol.InferRequest
 }
 
 func (noopNodeConn) Close() error {
+	return nil
+}
+
+type challengeNodeConn struct {
+	content string
+}
+
+func (c challengeNodeConn) SendInference(_ context.Context, _ string, _ protocol.InferRequest, sink scheduler.StreamSink) (protocol.InferDone, error) {
+	if c.content != "" {
+		if err := sink.Chunk(c.content); err != nil {
+			return protocol.InferDone{}, err
+		}
+	}
+	return protocol.InferDone{FinishReason: "stop", PromptTokens: 6, OutputTokens: 2}, nil
+}
+
+func (c challengeNodeConn) Close() error {
 	return nil
 }
 

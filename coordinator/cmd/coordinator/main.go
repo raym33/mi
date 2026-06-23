@@ -10,10 +10,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,6 +92,7 @@ func main() {
 	mux.HandleFunc("GET /admin/reputation", s.requireAdmin(s.adminReputation))
 	mux.HandleFunc("GET /admin/challenges", s.requireAdmin(s.adminChallenges))
 	mux.HandleFunc("POST /admin/challenges", s.requireAdmin(s.adminRecordChallenge))
+	mux.HandleFunc("POST /admin/challenges/run", s.requireAdmin(s.adminRunChallenge))
 	mux.HandleFunc("GET /admin/challenges/verify", s.requireAdmin(s.adminChallengesVerify))
 	mux.HandleFunc("POST /admin/consumers", s.requireAdmin(s.adminCreateConsumer))
 	mux.HandleFunc("POST /admin/consumers/{id}/rotate-key", s.requireAdmin(s.adminRotateConsumerKey))
@@ -99,6 +102,7 @@ func main() {
 	mux.HandleFunc("DELETE /admin/providers/{id}", s.requireAdmin(s.adminDisableProvider))
 
 	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
+	s.startChallengeRunner(cfg.Challenges)
 	log.Fatal(serveHTTP(cfg, mux))
 }
 
@@ -229,6 +233,30 @@ func (s *server) adminRecordChallenge(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, http.StatusCreated, event)
 }
 
+func (s *server) adminRunChallenge(w http.ResponseWriter, r *http.Request) {
+	var cfg config.ChallengeConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if cfg.Model == "" && r.URL.Query().Get("model") != "" {
+		cfg.Model = r.URL.Query().Get("model")
+	}
+	event, err := s.runSyntheticChallenge(r.Context(), cfg)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, challenge.ErrDisabled) {
+			status = http.StatusConflict
+		}
+		if errors.Is(err, scheduler.ErrNoNode) {
+			status = http.StatusServiceUnavailable
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSONStatus(w, http.StatusCreated, event)
+}
+
 func (s *server) adminCreateConsumer(w http.ResponseWriter, r *http.Request) {
 	var req city.CreateConsumerInput
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -241,6 +269,114 @@ func (s *server) adminCreateConsumer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONStatus(w, http.StatusCreated, created)
+}
+
+func (s *server) startChallengeRunner(cfg config.ChallengeConfig) {
+	if !cfg.Enabled || !cfg.AutoRun {
+		return
+	}
+	interval := cfg.Interval.Duration
+	if interval <= 0 {
+		interval = 10 * time.Minute
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			ctx, cancel := context.WithTimeout(context.Background(), challengeTimeout(cfg))
+			event, err := s.runSyntheticChallenge(ctx, cfg)
+			cancel()
+			if err != nil {
+				log.Printf("challenge runner: %v", err)
+				continue
+			}
+			log.Printf("challenge runner recorded provider=%s node=%s passed=%t latency_ms=%d score=%d", event.ProviderID, event.NodeID, event.Passed, event.LatencyMs, event.Score)
+		}
+	}()
+}
+
+func (s *server) runSyntheticChallenge(ctx context.Context, cfg config.ChallengeConfig) (challenge.Event, error) {
+	model := cfg.Model
+	if model == "" {
+		models := s.registry.Models()
+		if len(models) == 0 {
+			return challenge.Event{}, scheduler.ErrNoNode
+		}
+		model = models[0]
+	}
+	privacyTier := cfg.PrivacyTier
+	if privacyTier == "" {
+		privacyTier = privacy.Public
+	}
+	if _, err := privacy.NormalizeTier(privacyTier); err != nil {
+		return challenge.Event{}, err
+	}
+	prompt := cfg.Prompt
+	if prompt == "" {
+		prompt = "Reply with a short health-check token."
+	}
+	maxTokens := cfg.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 12
+	}
+	ctx, cancel := context.WithTimeout(ctx, challengeTimeout(cfg))
+	defer cancel()
+
+	var content string
+	startedAt := time.Now()
+	result, err := s.registry.Dispatch(ctx, "challenge-"+randomID(), protocol.InferRequest{
+		Model:       model,
+		PrivacyTier: privacyTier,
+		MaxTokens:   &maxTokens,
+		Messages: []protocol.ProtocolMessage{
+			{Role: "system", Content: "You are responding to a synthetic availability benchmark. Do not include private data."},
+			{Role: "user", Content: prompt},
+		},
+	}, collectSink{onChunk: func(chunk string) { content += chunk }})
+	latency := time.Since(startedAt)
+	if err != nil {
+		if result.ProviderID == "" {
+			return challenge.Event{}, err
+		}
+		return s.challenges.Record(challenge.RecordInput{
+			ProviderID: result.ProviderID,
+			NodeID:     result.NodeID,
+			Challenge:  "synthetic-inference:" + model,
+			Passed:     false,
+			LatencyMs:  latency.Milliseconds(),
+			Score:      0,
+			Notes:      "dispatch failed: " + err.Error(),
+		})
+	}
+
+	expected := strings.TrimSpace(cfg.ExpectedContains)
+	trimmed := strings.TrimSpace(content)
+	passed := trimmed != ""
+	if expected != "" {
+		passed = strings.Contains(strings.ToLower(trimmed), strings.ToLower(expected))
+	}
+	score := 100
+	notes := "synthetic inference completed"
+	if !passed {
+		score = 40
+		notes = "synthetic inference response did not match expected output"
+	}
+	return s.challenges.Record(challenge.RecordInput{
+		ProviderID: result.ProviderID,
+		NodeID:     result.NodeID,
+		Challenge:  "synthetic-inference:" + model,
+		Passed:     passed,
+		LatencyMs:  latency.Milliseconds(),
+		Score:      score,
+		Notes:      notes,
+	})
+}
+
+func challengeTimeout(cfg config.ChallengeConfig) time.Duration {
+	if cfg.Timeout.Duration > 0 {
+		return cfg.Timeout.Duration
+	}
+	return 30 * time.Second
 }
 
 func (s *server) adminCreateProvider(w http.ResponseWriter, r *http.Request) {
