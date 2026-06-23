@@ -22,9 +22,9 @@ type ChatCompletionChunk struct {
 }
 
 type ChunkChoice struct {
-	Index        int          `json:"index"`
-	Delta        ChatMessage  `json:"delta"`
-	FinishReason *string      `json:"finish_reason"`
+	Index        int         `json:"index"`
+	Delta        ChatMessage `json:"delta"`
+	FinishReason *string     `json:"finish_reason"`
 }
 
 type ChatCompletionResponse struct {

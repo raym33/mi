@@ -22,20 +22,20 @@ func New(baseURL string) *Client {
 }
 
 type chatRequest struct {
-	Model    string                    `json:"model"`
+	Model    string                     `json:"model"`
 	Messages []protocol.ProtocolMessage `json:"messages"`
-	Stream   bool                      `json:"stream"`
-	Options  map[string]any            `json:"options,omitempty"`
+	Stream   bool                       `json:"stream"`
+	Options  map[string]any             `json:"options,omitempty"`
 }
 
 type chatResponse struct {
 	Message struct {
 		Content string `json:"content"`
 	} `json:"message"`
-	Done              bool   `json:"done"`
-	DoneReason        string `json:"done_reason"`
-	PromptEvalCount   int    `json:"prompt_eval_count"`
-	EvalCount         int    `json:"eval_count"`
+	Done            bool   `json:"done"`
+	DoneReason      string `json:"done_reason"`
+	PromptEvalCount int    `json:"prompt_eval_count"`
+	EvalCount       int    `json:"eval_count"`
 }
 
 func (c *Client) Chat(ctx context.Context, req protocol.InferRequest, onChunk func(string) error) (protocol.InferDone, error) {

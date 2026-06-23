@@ -18,12 +18,12 @@ type SchedulerConfig struct {
 }
 
 type NodeAgent struct {
-	NodeID            string        `yaml:"node_id"`
-	CoordinatorURL    string        `yaml:"coordinator_url"`
-	OllamaURL         string        `yaml:"ollama_url"`
-	Models            []string      `yaml:"models"`
-	HeartbeatInterval Duration      `yaml:"heartbeat_interval"`
-	MaxConcurrent     int           `yaml:"max_concurrent"`
+	NodeID            string   `yaml:"node_id"`
+	CoordinatorURL    string   `yaml:"coordinator_url"`
+	OllamaURL         string   `yaml:"ollama_url"`
+	Models            []string `yaml:"models"`
+	HeartbeatInterval Duration `yaml:"heartbeat_interval"`
+	MaxConcurrent     int      `yaml:"max_concurrent"`
 }
 
 type Duration struct {

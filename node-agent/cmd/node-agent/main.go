@@ -16,6 +16,7 @@ import (
 	"github.com/raym33/mi/internal/config"
 	"github.com/raym33/mi/internal/ollama"
 	"github.com/raym33/mi/internal/protocol"
+	"github.com/raym33/mi/internal/system"
 	"github.com/raym33/mi/internal/wsutil"
 )
 
@@ -92,7 +93,7 @@ func (a *agent) heartbeatLoop(ctx context.Context, conn *safeConn) error {
 					Models:         a.cfg.Models,
 					ActiveRequests: int(a.active.Load()),
 					QueueDepth:     0,
-					MemoryFreeMB:   memoryFreeMB(),
+					MemoryFreeMB:   system.FreeMemoryMB(),
 					LoadAverage:    loadAverage(),
 					ObservedAt:     time.Now(),
 				},
@@ -168,12 +169,6 @@ func defaultNodeID() string {
 		return "mi-node"
 	}
 	return hostname
-}
-
-func memoryFreeMB() uint64 {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	return m.Sys / 1024 / 1024
 }
 
 func loadAverage() float64 {

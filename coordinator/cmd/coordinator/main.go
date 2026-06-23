@@ -126,7 +126,7 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	w.Header().Set("Connection", "keep-alive")
 
 	sink := sseSink{w: w, flusher: flusher, requestID: requestID, model: req.Model}
-	done, err := s.registry.Dispatch(r.Context(), requestID, req, sink)
+	done, err := s.registry.Dispatch(r.Context(), requestID, req, &sink)
 	if err != nil {
 		s.writeStreamError(w, flusher, err)
 		return
@@ -305,15 +305,21 @@ type sseSink struct {
 	flusher   http.Flusher
 	requestID string
 	model     string
+	sentRole  bool
 }
 
-func (s sseSink) Chunk(content string) error {
+func (s *sseSink) Chunk(content string) error {
+	role := ""
+	if !s.sentRole {
+		role = "assistant"
+		s.sentRole = true
+	}
 	chunk := openai.ChatCompletionChunk{
 		ID:      s.requestID,
 		Object:  "chat.completion.chunk",
 		Created: time.Now().Unix(),
 		Model:   s.model,
-		Choices: []openai.ChunkChoice{{Index: 0, Delta: openai.ChatMessage{Role: "assistant", Content: content}}},
+		Choices: []openai.ChunkChoice{{Index: 0, Delta: openai.ChatMessage{Role: role, Content: content}}},
 	}
 	writeSSE(s.w, s.flusher, chunk)
 	return nil

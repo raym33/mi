@@ -35,8 +35,21 @@ type Node struct {
 	QueueDepth    int
 	MemoryFreeMB  uint64
 	LoadAverage   float64
-	LastSeen       time.Time
+	LastSeen      time.Time
 	Conn          NodeConn
+}
+
+type NodeView struct {
+	ID            string    `json:"id"`
+	Hostname      string    `json:"hostname"`
+	Models        []string  `json:"models"`
+	MaxConcurrent int       `json:"max_concurrent"`
+	Active        int       `json:"active"`
+	QueueDepth    int       `json:"queue_depth"`
+	MemoryFreeMB  uint64    `json:"memory_free_mb"`
+	LoadAverage   float64   `json:"load_average"`
+	LastSeen      time.Time `json:"last_seen"`
+	Healthy       bool      `json:"healthy"`
 }
 
 func NewRegistry() *Registry {
@@ -56,7 +69,7 @@ func (r *Registry) Register(msg protocol.Register, conn NodeConn) {
 		Hostname:      msg.Hostname,
 		Models:        models,
 		MaxConcurrent: max(1, msg.MaxConcurrent),
-		LastSeen:       time.Now(),
+		LastSeen:      time.Now(),
 		Conn:          conn,
 	}
 }
@@ -110,14 +123,28 @@ func (r *Registry) Models() []string {
 	return models
 }
 
-func (r *Registry) Snapshot() []Node {
+func (r *Registry) Snapshot() []NodeView {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]Node, 0, len(r.nodes))
+	out := make([]NodeView, 0, len(r.nodes))
 	for _, node := range r.nodes {
-		copyNode := *node
-		copyNode.Conn = nil
-		out = append(out, copyNode)
+		models := make([]string, 0, len(node.Models))
+		for model := range node.Models {
+			models = append(models, model)
+		}
+		sort.Strings(models)
+		out = append(out, NodeView{
+			ID:            node.ID,
+			Hostname:      node.Hostname,
+			Models:        models,
+			MaxConcurrent: node.MaxConcurrent,
+			Active:        node.Active,
+			QueueDepth:    node.QueueDepth,
+			MemoryFreeMB:  node.MemoryFreeMB,
+			LoadAverage:   node.LoadAverage,
+			LastSeen:      node.LastSeen,
+			Healthy:       node.healthy(),
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
