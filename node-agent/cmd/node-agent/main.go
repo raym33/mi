@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"runtime"
 	"sync"
@@ -48,7 +51,11 @@ func main() {
 }
 
 func (a *agent) run(ctx context.Context) error {
-	conn, _, err := websocket.Dial(ctx, a.cfg.CoordinatorURL, nil)
+	dialOptions, err := dialOptions(a.cfg)
+	if err != nil {
+		return err
+	}
+	conn, _, err := websocket.Dial(ctx, a.cfg.CoordinatorURL, dialOptions)
 	if err != nil {
 		return err
 	}
@@ -187,4 +194,27 @@ func loadAverage() float64 {
 		}
 	}
 	return float64(runtime.NumGoroutine()+up) / 100
+}
+
+func dialOptions(cfg config.NodeAgent) (*websocket.DialOptions, error) {
+	if cfg.TLS.CAFile == "" && !cfg.TLS.InsecureSkipVerify {
+		return nil, nil
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.TLS.InsecureSkipVerify}
+	if cfg.TLS.CAFile != "" {
+		certPEM, err := os.ReadFile(cfg.TLS.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(certPEM) {
+			return nil, errors.New("failed to parse tls.ca_file")
+		}
+		tlsConfig.RootCAs = roots
+	}
+	return &websocket.DialOptions{
+		HTTPClient: &http.Client{
+			Transport: &http.Transport{TLSClientConfig: tlsConfig},
+		},
+	}, nil
 }

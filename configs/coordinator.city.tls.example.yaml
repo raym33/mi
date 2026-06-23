@@ -1,0 +1,22 @@
+listen_addr: ":8443"
+admin_token: "admin-dev-token"
+tls:
+  cert_file: "certs/server.crt"
+  key_file: "certs/server.key"
+city:
+  enabled: true
+  name: "Madrid Local AI"
+  require_provider_tokens: true
+  usage_store_path: "data/city-usage.json"
+  consumers:
+    - id: "studio-a"
+      display_name: "Studio A"
+      total_token_limit: 250000
+      api_keys:
+        - "sk-mi-studio-a-dev"
+  providers:
+    - id: "ray-home"
+      display_name: "Ray Home Macs"
+      token: "pk-mi-ray-home-dev"
+scheduler:
+  max_queue_penalty: 8

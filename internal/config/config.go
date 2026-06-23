@@ -11,8 +11,14 @@ type Coordinator struct {
 	ListenAddr string          `yaml:"listen_addr"`
 	APIKeys    []string        `yaml:"api_keys"`
 	AdminToken string          `yaml:"admin_token"`
+	TLS        ServerTLSConfig `yaml:"tls"`
 	City       CityConfig      `yaml:"city"`
 	Scheduler  SchedulerConfig `yaml:"scheduler"`
+}
+
+type ServerTLSConfig struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 type CityConfig struct {
@@ -42,16 +48,22 @@ type SchedulerConfig struct {
 }
 
 type NodeAgent struct {
-	NodeID            string   `yaml:"node_id"`
-	ProviderID        string   `yaml:"provider_id"`
-	ProviderToken     string   `yaml:"provider_token"`
-	PublicName        string   `yaml:"public_name"`
-	City              string   `yaml:"city"`
-	CoordinatorURL    string   `yaml:"coordinator_url"`
-	OllamaURL         string   `yaml:"ollama_url"`
-	Models            []string `yaml:"models"`
-	HeartbeatInterval Duration `yaml:"heartbeat_interval"`
-	MaxConcurrent     int      `yaml:"max_concurrent"`
+	NodeID            string          `yaml:"node_id"`
+	ProviderID        string          `yaml:"provider_id"`
+	ProviderToken     string          `yaml:"provider_token"`
+	PublicName        string          `yaml:"public_name"`
+	City              string          `yaml:"city"`
+	CoordinatorURL    string          `yaml:"coordinator_url"`
+	TLS               ClientTLSConfig `yaml:"tls"`
+	OllamaURL         string          `yaml:"ollama_url"`
+	Models            []string        `yaml:"models"`
+	HeartbeatInterval Duration        `yaml:"heartbeat_interval"`
+	MaxConcurrent     int             `yaml:"max_concurrent"`
+}
+
+type ClientTLSConfig struct {
+	CAFile             string `yaml:"ca_file"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 }
 
 type Duration struct {

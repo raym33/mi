@@ -4,6 +4,9 @@ provider_token: ""
 public_name: ""
 city: ""
 coordinator_url: "ws://localhost:8080/ws/node"
+tls:
+  ca_file: ""
+  insecure_skip_verify: false
 ollama_url: "http://localhost:11434"
 models:
   - "llama3.1:8b"

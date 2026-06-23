@@ -25,6 +25,13 @@ Or:
 make run-city-coordinator
 ```
 
+For HTTPS/WSS transport:
+
+```bash
+make dev-certs
+make run-city-coordinator-tls
+```
+
 ## Join as a provider
 
 On a Mac with Ollama running:
@@ -38,6 +45,12 @@ Or:
 
 ```bash
 make run-city-node
+```
+
+For WSS transport:
+
+```bash
+make run-city-node-tls
 ```
 
 For another provider, copy `configs/node-agent.city.example.yaml` and change:
@@ -163,6 +176,12 @@ Anyone can inspect public network capacity:
 curl http://localhost:8080/network/status
 ```
 
+With TLS enabled:
+
+```bash
+curl --cacert certs/ca.crt https://localhost:8443/network/status
+```
+
 Run the full city smoke test:
 
 ```bash
@@ -184,6 +203,7 @@ make city-smoke
 - Move from JSON persistence to SQLite/Postgres for larger networks.
 - Add quotas and prepaid credits.
 - Add TLS/mTLS.
+- Add mTLS for node-only endpoints.
 - Add provider reputation and uptime scoring.
 - Add request retry before first token.
 - Add prompt privacy controls and optional coordinator-to-provider encryption.

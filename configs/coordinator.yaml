@@ -1,6 +1,9 @@
 listen_addr: ":8080"
 api_keys: []
 admin_token: ""
+tls:
+  cert_file: ""
+  key_file: ""
 city:
   enabled: false
   name: ""

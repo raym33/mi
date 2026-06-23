@@ -1,0 +1,14 @@
+node_id: ""
+provider_id: "ray-home"
+provider_token: "pk-mi-ray-home-dev"
+public_name: "Ray Mac mini"
+city: "Madrid"
+coordinator_url: "wss://localhost:8443/ws/node"
+tls:
+  ca_file: "certs/ca.crt"
+  insecure_skip_verify: false
+ollama_url: "http://localhost:11434"
+models:
+  - "llama3.1:8b"
+heartbeat_interval: "5s"
+max_concurrent: 1

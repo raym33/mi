@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -59,7 +60,7 @@ func main() {
 	mux.HandleFunc("DELETE /admin/providers/{id}", s.requireAdmin(s.adminDisableProvider))
 
 	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
-	log.Fatal(http.ListenAndServe(cfg.ListenAddr, mux))
+	log.Fatal(serveHTTP(cfg, mux))
 }
 
 type contextKey string
@@ -533,4 +534,22 @@ func consumerID(ctx context.Context) string {
 		return value
 	}
 	return "local"
+}
+
+func serveHTTP(cfg config.Coordinator, handler http.Handler) error {
+	server := &http.Server{
+		Addr:    cfg.ListenAddr,
+		Handler: handler,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+	}
+	if cfg.TLS.CertFile != "" || cfg.TLS.KeyFile != "" {
+		if cfg.TLS.CertFile == "" || cfg.TLS.KeyFile == "" {
+			return errors.New("both tls.cert_file and tls.key_file are required")
+		}
+		log.Printf("TLS enabled for coordinator")
+		return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+	}
+	return server.ListenAndServe()
 }
