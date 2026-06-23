@@ -2,7 +2,9 @@ package city
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/raym33/mi/internal/config"
@@ -84,6 +86,75 @@ func TestUsagePersistsAcrossMarketRestart(t *testing.T) {
 	snapshot := restarted.Snapshot()
 	if len(snapshot.ProviderUsage) != 1 || snapshot.ProviderUsage[0].TotalTokens != 18 {
 		t.Fatalf("provider usage after restart = %+v, want total=18", snapshot.ProviderUsage)
+	}
+}
+
+func TestDynamicEnrollmentPersistsHashedSecrets(t *testing.T) {
+	usagePath := filepath.Join(t.TempDir(), "city-state.json")
+	cfg := config.CityConfig{
+		Enabled:               true,
+		RequireProviderTokens: true,
+		UsageStorePath:        usagePath,
+	}
+
+	market, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	consumer, err := market.CreateConsumer(CreateConsumerInput{
+		ID:              "Studio-New",
+		DisplayName:     "Studio New",
+		TotalTokenLimit: 123,
+	})
+	if err != nil {
+		t.Fatalf("create consumer: %v", err)
+	}
+	provider, err := market.CreateProvider(CreateProviderInput{ID: "Provider-New", DisplayName: "Provider New"})
+	if err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+
+	if !strings.HasPrefix(consumer.APIKey, "sk-mi-") {
+		t.Fatalf("consumer api key = %q, want sk-mi- prefix", consumer.APIKey)
+	}
+	if !strings.HasPrefix(provider.ProviderToken, "pk-mi-") {
+		t.Fatalf("provider token = %q, want pk-mi- prefix", provider.ProviderToken)
+	}
+	consumerID, err := market.AuthenticateConsumer(consumer.APIKey)
+	if err != nil || consumerID != "studio-new" {
+		t.Fatalf("authenticate dynamic consumer = %q, %v", consumerID, err)
+	}
+	providerID, err := market.AuthenticateProvider(protocol.Register{NodeID: "node-a", ProviderToken: provider.ProviderToken})
+	if err != nil || providerID != "provider-new" {
+		t.Fatalf("authenticate dynamic provider = %q, %v", providerID, err)
+	}
+
+	state, err := os.ReadFile(usagePath)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if strings.Contains(string(state), consumer.APIKey) || strings.Contains(string(state), provider.ProviderToken) {
+		t.Fatalf("state file contains plaintext secret: %s", string(state))
+	}
+
+	restarted, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("restart market: %v", err)
+	}
+	consumerID, err = restarted.AuthenticateConsumer(consumer.APIKey)
+	if err != nil || consumerID != "studio-new" {
+		t.Fatalf("authenticate restarted consumer = %q, %v", consumerID, err)
+	}
+	providerID, err = restarted.AuthenticateProvider(protocol.Register{NodeID: "node-a", ProviderToken: provider.ProviderToken})
+	if err != nil || providerID != "provider-new" {
+		t.Fatalf("authenticate restarted provider = %q, %v", providerID, err)
+	}
+
+	if _, err := restarted.CreateConsumer(CreateConsumerInput{ID: "studio-new"}); !errors.Is(err, ErrAccountExists) {
+		t.Fatalf("duplicate consumer = %v, want ErrAccountExists", err)
+	}
+	if _, err := restarted.CreateProvider(CreateProviderInput{ID: "bad account"}); !errors.Is(err, ErrInvalidAccount) {
+		t.Fatalf("invalid provider = %v, want ErrInvalidAccount", err)
 	}
 }
 

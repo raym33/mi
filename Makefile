@@ -1,4 +1,4 @@
-.PHONY: build test run-coordinator run-node run-city-coordinator run-city-node smoke city-smoke
+.PHONY: build test run-coordinator run-node run-city-coordinator run-city-node smoke city-smoke city-enroll
 
 build:
 	go build -o bin/coordinator ./coordinator/cmd/coordinator
@@ -24,3 +24,6 @@ smoke:
 
 city-smoke:
 	bash scripts/city-smoke.sh
+
+city-enroll:
+	bash scripts/city-enroll.sh

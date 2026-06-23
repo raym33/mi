@@ -51,6 +51,8 @@ func main() {
 	mux.HandleFunc("GET /ws/node", s.nodeWebSocket)
 	mux.HandleFunc("GET /admin/nodes", s.requireAdmin(s.adminNodes))
 	mux.HandleFunc("GET /admin/city", s.requireAdmin(s.adminCity))
+	mux.HandleFunc("POST /admin/consumers", s.requireAdmin(s.adminCreateConsumer))
+	mux.HandleFunc("POST /admin/providers", s.requireAdmin(s.adminCreateProvider))
 
 	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
 	log.Fatal(http.ListenAndServe(cfg.ListenAddr, mux))
@@ -129,6 +131,34 @@ func (s *server) adminNodes(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) adminCity(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.market.Snapshot())
+}
+
+func (s *server) adminCreateConsumer(w http.ResponseWriter, r *http.Request) {
+	var req city.CreateConsumerInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	created, err := s.market.CreateConsumer(req)
+	if err != nil {
+		writeCreateError(w, err)
+		return
+	}
+	writeJSONStatus(w, http.StatusCreated, created)
+}
+
+func (s *server) adminCreateProvider(w http.ResponseWriter, r *http.Request) {
+	var req city.CreateProviderInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	created, err := s.market.CreateProvider(req)
+	if err != nil {
+		writeCreateError(w, err)
+		return
+	}
+	writeJSONStatus(w, http.StatusCreated, created)
 }
 
 func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -407,6 +437,25 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, value any) {
 	data, _ := json.Marshal(value)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	flusher.Flush()
+}
+
+func writeCreateError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	errorType := "internal_error"
+	switch {
+	case errors.Is(err, city.ErrInvalidAccount):
+		status = http.StatusBadRequest
+		errorType = "invalid_account"
+	case errors.Is(err, city.ErrAccountExists):
+		status = http.StatusConflict
+		errorType = "account_exists"
+	}
+	writeJSONStatus(w, status, map[string]any{
+		"error": map[string]string{
+			"message": err.Error(),
+			"type":    errorType,
+		},
+	})
 }
 
 func randomID() string {

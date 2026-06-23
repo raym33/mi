@@ -66,3 +66,10 @@ make run-city-coordinator
 make run-city-node
 make city-smoke
 ```
+
+Enroll city accounts dynamically:
+
+```bash
+CONSUMER_ID=studio-b make city-enroll
+PROVIDER_ID=neighbor-mac make city-enroll
+```

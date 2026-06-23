@@ -47,6 +47,51 @@ For another provider, copy `configs/node-agent.city.example.yaml` and change:
 - `public_name`
 - `coordinator_url`
 
+## Enroll accounts dynamically
+
+Static YAML accounts are fine for development. For a real city network, create accounts through the admin API so secrets are returned once and only SHA-256 hashes are stored in `data/city-usage.json`.
+
+Create a consumer:
+
+```bash
+curl http://localhost:8080/admin/consumers \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": "studio-b",
+    "display_name": "Studio B",
+    "total_token_limit": 250000
+  }'
+```
+
+The response includes `api_key`. Give that to the consumer once.
+
+Create a provider:
+
+```bash
+curl http://localhost:8080/admin/providers \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": "neighbor-mac",
+    "display_name": "Neighbor Mac Studio"
+  }'
+```
+
+The response includes `provider_token`. Put it in the node config:
+
+```yaml
+provider_id: "neighbor-mac"
+provider_token: "pk-mi-..."
+```
+
+There is also a helper script:
+
+```bash
+CONSUMER_ID=studio-b make city-enroll
+PROVIDER_ID=neighbor-mac make city-enroll
+```
+
 ## Call as a consumer
 
 ```bash
@@ -68,6 +113,7 @@ curl http://localhost:8080/admin/city \
 ```
 
 The example config writes usage to `data/city-usage.json`. Keep that file backed up if it represents real credits.
+Generated API keys and provider tokens are not stored in plaintext; only hashes are persisted.
 
 Consumers can inspect their own account and remaining quota:
 
@@ -99,6 +145,7 @@ make city-smoke
 ## Next hardening steps
 
 - Replace static provider tokens with enrollment links.
+- Add secret rotation and revocation.
 - Move from JSON persistence to SQLite/Postgres for larger networks.
 - Add quotas and prepaid credits.
 - Add TLS/mTLS.
