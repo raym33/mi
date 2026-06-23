@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/raym33/mi/internal/protocol"
 )
@@ -64,6 +65,12 @@ func TestDispatchRetriesBeforeFirstChunk(t *testing.T) {
 	if first.calls != 1 || second.calls != 1 {
 		t.Fatalf("calls first=%d second=%d, want 1 each", first.calls, second.calls)
 	}
+	nodes := registry.Snapshot()
+	for _, node := range nodes {
+		if node.ID == "node-a" && (!node.InCooldown || node.ErrorStreak != 1 || node.LastError == "") {
+			t.Fatalf("node-a cooldown state = %+v, want cooldown after pre-token failure", node)
+		}
+	}
 }
 
 func TestDispatchDoesNotRetryAfterFirstChunk(t *testing.T) {
@@ -106,6 +113,61 @@ func TestDispatchDoesNotRetryNonRetryableError(t *testing.T) {
 	}
 	if result.Attempts != 1 || second.calls != 0 {
 		t.Fatalf("result = %+v second calls=%d, want no retry", result, second.calls)
+	}
+}
+
+func TestCooldownSkipsFailedNodeOnNextDispatch(t *testing.T) {
+	registry := NewRegistry()
+	first := &scriptedConn{err: errors.New("startup failed")}
+	second := &scriptedConn{done: protocol.InferDone{FinishReason: "stop"}}
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"m"}}, first)
+	registry.Register(protocol.Register{NodeID: "node-b", ProviderID: "provider-b", Models: []string{"m"}}, second)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-a", Models: []string{"m"}, LoadAverage: 0})
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-b", Models: []string{"m"}, LoadAverage: 10})
+
+	if _, err := registry.Dispatch(context.Background(), "req-1", protocol.InferRequest{Model: "m"}, &collectTestSink{}); err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	first.err = nil
+	first.done = protocol.InferDone{FinishReason: "stop"}
+	result, err := registry.Dispatch(context.Background(), "req-2", protocol.InferRequest{Model: "m"}, &collectTestSink{})
+	if err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+	if result.NodeID != "node-b" {
+		t.Fatalf("second dispatch node = %s, want node-b while node-a is cooling down", result.NodeID)
+	}
+	if first.calls != 1 {
+		t.Fatalf("node-a calls = %d, want no second call during cooldown", first.calls)
+	}
+
+	status := registry.NetworkStatus()
+	if status.CooldownNodes != 1 {
+		t.Fatalf("cooldown nodes = %d, want 1", status.CooldownNodes)
+	}
+}
+
+func TestSuccessClearsCooldownState(t *testing.T) {
+	registry := NewRegistry()
+	conn := &scriptedConn{err: errors.New("startup failed")}
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"m"}}, conn)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-a", Models: []string{"m"}, LoadAverage: 0})
+
+	if _, err := registry.Dispatch(context.Background(), "req-1", protocol.InferRequest{Model: "m"}, &collectTestSink{}); err == nil {
+		t.Fatal("first dispatch should fail")
+	}
+	registry.mu.Lock()
+	registry.nodes["node-a"].CooldownUntil = time.Now().Add(-time.Second)
+	registry.mu.Unlock()
+
+	conn.err = nil
+	conn.done = protocol.InferDone{FinishReason: "stop"}
+	if _, err := registry.Dispatch(context.Background(), "req-2", protocol.InferRequest{Model: "m"}, &collectTestSink{}); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	}
+	node := registry.Snapshot()[0]
+	if node.ErrorStreak != 0 || node.InCooldown || node.LastError != "" {
+		t.Fatalf("node after success = %+v, want cleared cooldown state", node)
 	}
 }
 

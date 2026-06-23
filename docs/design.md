@@ -27,6 +27,8 @@ The scheduler retries another eligible node only while no chunk has been sent to
 
 Once the first chunk is emitted, the request is pinned to that node. If the node fails mid-generation, the error is surfaced instead of replaying the prompt on another node.
 
+Nodes that fail before the first token enter a short cooldown. Repeated failures extend the cooldown up to a cap, and a successful request clears the node's error streak. This keeps an unstable Mac from being chosen first over and over while still letting it recover automatically.
+
 Responses include dispatch metadata:
 
 - `X-Mi-Dispatch-Attempts`
@@ -34,6 +36,13 @@ Responses include dispatch metadata:
 - `X-Mi-Provider-Id`
 
 For streaming responses, those values are sent as HTTP trailers.
+
+Admin node snapshots expose:
+
+- `error_streak`
+- `cooldown_until`
+- `last_error`
+- `in_cooldown`
 
 ## Next milestones
 

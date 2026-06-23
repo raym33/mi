@@ -13,6 +13,11 @@ import (
 
 var ErrNoNode = errors.New("no healthy node can serve requested model")
 
+const (
+	baseErrorCooldown = 10 * time.Second
+	maxErrorCooldown  = 60 * time.Second
+)
+
 type NodeConn interface {
 	SendInference(ctx context.Context, requestID string, req protocol.InferRequest, sink StreamSink) (protocol.InferDone, error)
 	Close() error
@@ -40,6 +45,9 @@ type Node struct {
 	MemoryFreeMB  uint64
 	LoadAverage   float64
 	LastSeen      time.Time
+	ErrorStreak   int
+	CooldownUntil time.Time
+	LastError     string
 	Conn          NodeConn
 }
 
@@ -57,6 +65,10 @@ type NodeView struct {
 	LoadAverage   float64   `json:"load_average"`
 	LastSeen      time.Time `json:"last_seen"`
 	Healthy       bool      `json:"healthy"`
+	ErrorStreak   int       `json:"error_streak,omitempty"`
+	CooldownUntil time.Time `json:"cooldown_until,omitempty"`
+	LastError     string    `json:"last_error,omitempty"`
+	InCooldown    bool      `json:"in_cooldown"`
 }
 
 type NetworkStatus struct {
@@ -65,6 +77,7 @@ type NetworkStatus struct {
 	ActiveRequests    int      `json:"active_requests"`
 	MaxConcurrent     int      `json:"max_concurrent"`
 	AvailableSlots    int      `json:"available_slots"`
+	CooldownNodes     int      `json:"cooldown_nodes"`
 	TotalMemoryFreeMB uint64   `json:"total_memory_free_mb"`
 	Models            []string `json:"models"`
 	Cities            []string `json:"cities,omitempty"`
@@ -197,6 +210,10 @@ func (r *Registry) Snapshot() []NodeView {
 			LoadAverage:   node.LoadAverage,
 			LastSeen:      node.LastSeen,
 			Healthy:       node.healthy(),
+			ErrorStreak:   node.ErrorStreak,
+			CooldownUntil: node.CooldownUntil,
+			LastError:     node.LastError,
+			InCooldown:    node.inCooldown(time.Now()),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -210,8 +227,13 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 	models := map[string]bool{}
 	cities := map[string]bool{}
 	status := NetworkStatus{Nodes: len(r.nodes)}
+	now := time.Now()
 	for _, node := range r.nodes {
 		if !node.healthy() {
+			continue
+		}
+		if node.inCooldown(now) {
+			status.CooldownNodes++
 			continue
 		}
 		status.HealthyNodes++
@@ -256,11 +278,13 @@ func (r *Registry) Dispatch(ctx context.Context, requestID string, req protocol.
 		done, err := node.Conn.SendInference(ctx, requestID, req, tracker)
 		r.release(node.ID)
 		if err == nil {
+			r.recordSuccess(node.ID)
 			return DispatchResult{Done: done, NodeID: node.ID, ProviderID: node.ProviderID, Attempts: attempts}, nil
 		}
 		if tracker.sent || !canRetry(ctx, err) {
 			return DispatchResult{NodeID: node.ID, ProviderID: node.ProviderID, Attempts: attempts}, err
 		}
+		r.recordPreTokenFailure(node.ID, err)
 		attempted[node.ID] = true
 		lastErr = err
 	}
@@ -271,11 +295,12 @@ func (r *Registry) reserve(model string, exclude map[string]bool) (*Node, error)
 	defer r.mu.Unlock()
 
 	var candidates []*Node
+	now := time.Now()
 	for _, node := range r.nodes {
 		if exclude[node.ID] {
 			continue
 		}
-		if node.healthy() && node.Models[model] && node.Active < node.MaxConcurrent {
+		if node.healthy() && !node.inCooldown(now) && node.Models[model] && node.Active < node.MaxConcurrent {
 			candidates = append(candidates, node)
 		}
 	}
@@ -298,8 +323,38 @@ func (r *Registry) release(nodeID string) {
 	}
 }
 
+func (r *Registry) recordSuccess(nodeID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if node, ok := r.nodes[nodeID]; ok {
+		node.ErrorStreak = 0
+		node.CooldownUntil = time.Time{}
+		node.LastError = ""
+	}
+}
+
+func (r *Registry) recordPreTokenFailure(nodeID string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	node, ok := r.nodes[nodeID]
+	if !ok {
+		return
+	}
+	node.ErrorStreak++
+	cooldown := baseErrorCooldown * time.Duration(node.ErrorStreak)
+	if cooldown > maxErrorCooldown {
+		cooldown = maxErrorCooldown
+	}
+	node.CooldownUntil = time.Now().Add(cooldown)
+	node.LastError = err.Error()
+}
+
 func (n *Node) healthy() bool {
 	return n.Conn != nil && time.Since(n.LastSeen) < 20*time.Second
+}
+
+func (n *Node) inCooldown(now time.Time) bool {
+	return !n.CooldownUntil.IsZero() && now.Before(n.CooldownUntil)
 }
 
 func cost(n *Node) float64 {
