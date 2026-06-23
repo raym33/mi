@@ -15,6 +15,7 @@ type Coordinator struct {
 	TLS          ServerTLSConfig  `yaml:"tls"`
 	City         CityConfig       `yaml:"city"`
 	Settlement   SettlementConfig `yaml:"settlement"`
+	Challenges   ChallengeConfig  `yaml:"challenges"`
 	Models       ModelConfig      `yaml:"models"`
 	Scheduler    SchedulerConfig  `yaml:"scheduler"`
 }
@@ -56,6 +57,11 @@ type SettlementConfig struct {
 	ProviderRewardShareBPS       int64  `yaml:"provider_reward_share_bps"`
 	TargetLatencyMs              int64  `yaml:"target_latency_ms"`
 	LatencyPenaltyBPS            int64  `yaml:"latency_penalty_bps"`
+}
+
+type ChallengeConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"`
 }
 
 type ModelConfig struct {

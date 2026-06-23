@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/raym33/mi/internal/challenge"
 	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/config"
 	"github.com/raym33/mi/internal/modelcatalog"
@@ -35,6 +36,7 @@ type server struct {
 	market                *city.Market
 	modelCatalog          *modelcatalog.Catalog
 	settlement            *settlement.Ledger
+	challenges            *challenge.Ledger
 	adminToken            string
 	devAdminOpen          bool
 	requireNodeClientCert bool
@@ -58,11 +60,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	challengeLedger, err := challenge.New(cfg.Challenges)
+	if err != nil {
+		log.Fatal(err)
+	}
 	s := &server{
 		registry:              scheduler.NewRegistry(),
 		market:                market,
 		modelCatalog:          modelcatalog.New(cfg.Models),
 		settlement:            settlementLedger,
+		challenges:            challengeLedger,
 		adminToken:            cfg.AdminToken,
 		devAdminOpen:          cfg.DevAdminOpen,
 		requireNodeClientCert: cfg.TLS.NodeClientCAFile != "",
@@ -81,6 +88,9 @@ func main() {
 	mux.HandleFunc("GET /admin/settlement", s.requireAdmin(s.adminSettlement))
 	mux.HandleFunc("GET /admin/settlement/verify", s.requireAdmin(s.adminSettlementVerify))
 	mux.HandleFunc("GET /admin/reputation", s.requireAdmin(s.adminReputation))
+	mux.HandleFunc("GET /admin/challenges", s.requireAdmin(s.adminChallenges))
+	mux.HandleFunc("POST /admin/challenges", s.requireAdmin(s.adminRecordChallenge))
+	mux.HandleFunc("GET /admin/challenges/verify", s.requireAdmin(s.adminChallengesVerify))
 	mux.HandleFunc("POST /admin/consumers", s.requireAdmin(s.adminCreateConsumer))
 	mux.HandleFunc("POST /admin/consumers/{id}/rotate-key", s.requireAdmin(s.adminRotateConsumerKey))
 	mux.HandleFunc("DELETE /admin/consumers/{id}", s.requireAdmin(s.adminDisableConsumer))
@@ -185,7 +195,38 @@ func (s *server) adminSettlementVerify(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) adminReputation(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, reputation.Build(s.market.Snapshot(), s.registry.Snapshot(), s.settlement.Snapshot(0)))
+	writeJSON(w, reputation.Build(s.market.Snapshot(), s.registry.Snapshot(), s.settlement.Snapshot(0), s.challenges.Snapshot(0)))
+}
+
+func (s *server) adminChallenges(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	writeJSON(w, s.challenges.Snapshot(limit))
+}
+
+func (s *server) adminChallengesVerify(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.challenges.Verify())
+}
+
+func (s *server) adminRecordChallenge(w http.ResponseWriter, r *http.Request) {
+	var req challenge.RecordInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.ProviderID == "" || req.Challenge == "" {
+		http.Error(w, "provider_id and challenge are required", http.StatusBadRequest)
+		return
+	}
+	event, err := s.challenges.Record(req)
+	if err != nil {
+		if errors.Is(err, challenge.ErrDisabled) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSONStatus(w, http.StatusCreated, event)
 }
 
 func (s *server) adminCreateConsumer(w http.ResponseWriter, r *http.Request) {

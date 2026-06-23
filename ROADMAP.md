@@ -13,6 +13,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Quota reservations for concurrent requests.
 - Hash-chained settlement events for consumer debits and provider rewards.
 - Provider reputation from node health, cooldowns, completed events, tokens, and rewards.
+- Tamper-evident benchmark challenge events feeding provider reputation.
 - Persistent local usage ledger.
 - HTTPS/WSS and node mTLS.
 - Scheduler failover before first token.
@@ -26,6 +27,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Provider payout reports and invoice exports.
 - Optional on-chain anchoring of settlement hashes.
 - Benchmark-driven reputation, challenge jobs, and slashing/dispute flows.
+- Automated synthetic challenge dispatch to active nodes.
 - One-command provider enrollment.
 - macOS LaunchAgent installer for always-on nodes.
 - Better admin and operator documentation.

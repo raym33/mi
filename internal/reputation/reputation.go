@@ -4,6 +4,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/raym33/mi/internal/challenge"
 	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/scheduler"
 	"github.com/raym33/mi/internal/settlement"
@@ -15,24 +16,27 @@ type Report struct {
 }
 
 type ProviderReputation struct {
-	ProviderID       string           `json:"provider_id"`
-	DisplayName      string           `json:"display_name,omitempty"`
-	PrivacyMode      string           `json:"privacy_mode,omitempty"`
-	Disabled         bool             `json:"disabled,omitempty"`
-	Score            int              `json:"score"`
-	Grade            string           `json:"grade"`
-	TotalNodes       int              `json:"total_nodes"`
-	HealthyNodes     int              `json:"healthy_nodes"`
-	CooldownNodes    int              `json:"cooldown_nodes"`
-	ActiveRequests   int              `json:"active_requests"`
-	ErrorStreak      int              `json:"error_streak"`
-	CompletedEvents  int64            `json:"completed_events"`
-	TotalTokens      int64            `json:"total_tokens"`
-	AverageLatencyMs int64            `json:"average_latency_ms,omitempty"`
-	RewardMicros     int64            `json:"reward_micros"`
-	PenaltyMicros    int64            `json:"penalty_micros,omitempty"`
-	Notes            []string         `json:"notes,omitempty"`
-	Nodes            []NodeReputation `json:"nodes,omitempty"`
+	ProviderID           string           `json:"provider_id"`
+	DisplayName          string           `json:"display_name,omitempty"`
+	PrivacyMode          string           `json:"privacy_mode,omitempty"`
+	Disabled             bool             `json:"disabled,omitempty"`
+	Score                int              `json:"score"`
+	Grade                string           `json:"grade"`
+	TotalNodes           int              `json:"total_nodes"`
+	HealthyNodes         int              `json:"healthy_nodes"`
+	CooldownNodes        int              `json:"cooldown_nodes"`
+	ActiveRequests       int              `json:"active_requests"`
+	ErrorStreak          int              `json:"error_streak"`
+	CompletedEvents      int64            `json:"completed_events"`
+	TotalTokens          int64            `json:"total_tokens"`
+	AverageLatencyMs     int64            `json:"average_latency_ms,omitempty"`
+	Challenges           int64            `json:"challenges,omitempty"`
+	ChallengePassRateBPS int64            `json:"challenge_pass_rate_bps,omitempty"`
+	ChallengeScore       int              `json:"challenge_score,omitempty"`
+	RewardMicros         int64            `json:"reward_micros"`
+	PenaltyMicros        int64            `json:"penalty_micros,omitempty"`
+	Notes                []string         `json:"notes,omitempty"`
+	Nodes                []NodeReputation `json:"nodes,omitempty"`
 }
 
 type NodeReputation struct {
@@ -47,7 +51,7 @@ type NodeReputation struct {
 	LastError     string   `json:"last_error,omitempty"`
 }
 
-func Build(citySnapshot city.Snapshot, nodes []scheduler.NodeView, settlementSnapshot settlement.Snapshot) Report {
+func Build(citySnapshot city.Snapshot, nodes []scheduler.NodeView, settlementSnapshot settlement.Snapshot, challengeSnapshot challenge.Snapshot) Report {
 	providers := map[string]*ProviderReputation{}
 	for _, provider := range citySnapshot.Providers {
 		providers[provider.ID] = &ProviderReputation{
@@ -64,6 +68,12 @@ func Build(citySnapshot city.Snapshot, nodes []scheduler.NodeView, settlementSna
 		item.AverageLatencyMs = balance.AverageLatencyMs
 		item.RewardMicros = balance.RewardMicros
 		item.PenaltyMicros = balance.PenaltyMicros
+	}
+	for _, summary := range challengeSnapshot.Summaries {
+		item := providerItem(providers, summary.ProviderID)
+		item.Challenges = summary.Challenges
+		item.ChallengePassRateBPS = summary.PassRateBPS
+		item.ChallengeScore = summary.AverageScore
 	}
 	for _, node := range nodes {
 		providerID := node.ProviderID
@@ -148,6 +158,15 @@ func score(item ProviderReputation) (int, []string) {
 	if item.PenaltyMicros > 0 {
 		notes = append(notes, "SLA latency penalties applied")
 		value -= min(20, int(item.PenaltyMicros/100))
+	}
+	if item.Challenges > 0 {
+		value += min(10, item.ChallengeScore/10)
+		if item.ChallengePassRateBPS < 8000 {
+			notes = append(notes, "challenge pass rate below target")
+			value -= min(25, int((8000-item.ChallengePassRateBPS)/400))
+		}
+	} else {
+		notes = append(notes, "no benchmark challenges recorded")
 	}
 	if item.TotalNodes > 0 && item.HealthyNodes == 0 {
 		notes = append(notes, "all nodes unhealthy")

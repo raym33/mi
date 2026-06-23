@@ -20,6 +20,9 @@ settlement:
   provider_reward_share_bps: 0
   target_latency_ms: 0
   latency_penalty_bps: 0
+challenges:
+  enabled: false
+  path: ""
 models:
   aliases:
     - id: "fast"

@@ -203,8 +203,27 @@ curl http://localhost:8080/admin/reputation \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
+Record and inspect benchmark challenges:
+
+```bash
+curl -X POST http://localhost:8080/admin/challenges \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "provider_id": "ray-home",
+    "challenge": "latency-smoke",
+    "passed": true,
+    "latency_ms": 420,
+    "score": 94
+  }'
+
+curl http://localhost:8080/admin/challenges \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
 The example config writes usage to `data/city-usage.json`. Keep that file backed up if it represents real credits.
 The example settlement chain writes to `data/settlement-chain.jsonl`. Back it up and periodically anchor its latest hash externally if rewards represent real money.
+The example challenge chain writes to `data/challenge-chain.jsonl`.
 Generated API keys and provider tokens are not stored in plaintext; only hashes are persisted.
 
 Consumers can inspect their own account and remaining quota:

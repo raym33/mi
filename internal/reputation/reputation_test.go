@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/raym33/mi/internal/challenge"
 	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/scheduler"
 	"github.com/raym33/mi/internal/settlement"
@@ -24,6 +25,10 @@ func TestBuildRanksHealthyProviders(t *testing.T) {
 			{AccountID: "good", Events: 12, TotalTokens: 5000, AverageLatencyMs: 250, RewardMicros: 3500},
 			{AccountID: "bad", Events: 1, TotalTokens: 100, AverageLatencyMs: 2500, RewardMicros: 70, PenaltyMicros: 500},
 		}},
+		challenge.Snapshot{Summaries: []challenge.ProviderSummary{
+			{ProviderID: "good", Challenges: 4, Passed: 4, PassRateBPS: 10000, AverageScore: 95},
+			{ProviderID: "bad", Challenges: 4, Passed: 1, Failed: 3, PassRateBPS: 2500, AverageScore: 35},
+		}},
 	)
 	if len(report.Providers) != 3 {
 		t.Fatalf("providers = %d, want 3", len(report.Providers))
@@ -36,7 +41,7 @@ func TestBuildRanksHealthyProviders(t *testing.T) {
 		t.Fatalf("disabled provider = %+v, want zero score/F", disabled)
 	}
 	bad := findProvider(report, "bad")
-	if len(bad.Notes) == 0 || bad.PenaltyMicros != 500 || bad.AverageLatencyMs != 2500 {
+	if len(bad.Notes) == 0 || bad.PenaltyMicros != 500 || bad.AverageLatencyMs != 2500 || bad.ChallengePassRateBPS != 2500 {
 		t.Fatalf("bad provider = %+v, want penalty/latency risk notes", bad)
 	}
 }

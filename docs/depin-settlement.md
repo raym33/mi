@@ -111,6 +111,45 @@ The first reputation model uses objective local signals:
 
 This is intentionally off-chain and explainable. Later versions can add benchmarking, signed attestations, challenge jobs, staking, slashing, and public dashboards.
 
+## Benchmark challenges
+
+Challenge events are a separate tamper-evident chain for provider benchmarking and anti-farming signals.
+
+```yaml
+challenges:
+  enabled: true
+  path: "data/challenge-chain.jsonl"
+```
+
+Record a manual challenge result:
+
+```bash
+curl -X POST http://localhost:8080/admin/challenges \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "provider_id": "ray-home",
+    "node_id": "ray-home-node",
+    "challenge": "latency-smoke",
+    "passed": true,
+    "latency_ms": 420,
+    "score": 94,
+    "notes": "short synthetic prompt"
+  }'
+```
+
+Inspect and verify challenges:
+
+```bash
+curl http://localhost:8080/admin/challenges \
+  -H 'Authorization: Bearer admin-dev-token'
+
+curl http://localhost:8080/admin/challenges/verify \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
+Challenge summaries feed provider reputation. Providers with weak pass rates or low challenge scores receive lower reputation until their later performance improves.
+
 ## Payment roadmap
 
 The current settlement layer is payment-ready accounting, not a payment processor.
@@ -121,7 +160,7 @@ Recommended path:
 2. Invoice export: operator pays providers off-platform.
 3. Stablecoin payout: map provider balances to wallet addresses.
 4. On-chain anchoring: periodically publish `last_hash` to a public chain.
-5. Slashing and disputes: add signed provider claims, uptime proofs, and challenge windows.
+5. Slashing and disputes: add signed provider claims, uptime proofs, automated challenge windows, and provider bonds.
 6. Stronger verification: add TEEs, signed node attestations, redaction, or proof-of-inference as those techniques mature.
 
 ## Security model
