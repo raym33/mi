@@ -1,17 +1,34 @@
 # mi
 
-`mi` turns a local fleet of Apple Silicon Macs into one OpenAI-compatible inference endpoint.
+Local-first distributed inference for Apple Silicon fleets.
 
-The first version is LAN-first and intentionally small:
+`mi` turns a group of Macs into one OpenAI-compatible inference endpoint. It is designed for people, teams, coworking spaces, schools, small businesses, and city-scale communities that want strong local inference without sending every prompt to a centralized cloud API.
 
-- A `coordinator` exposes `/v1/chat/completions` and `/v1/models`.
-- Each Mac runs a `node-agent` that connects outbound to the coordinator over WebSocket.
-- Nodes serve requests through Ollama today, with the backend boundary ready for MLX later.
-- The scheduler routes by model availability, health, queue depth, memory pressure, and measured latency.
-- The scheduler retries another node automatically if a provider fails before the first streamed token.
-- Unstable nodes enter short cooldowns and recover automatically after a successful request.
-- City mode lets multiple consumers and providers share compute with API keys, provider tokens, and usage accounting.
-- Privacy tiers keep sensitive requests on trusted nodes while public prompts can use rented provider capacity.
+The project is early, but the core control plane is already here: a coordinator, outbound node agents, OpenAI-compatible chat completions, model aliases, provider enrollment, quotas, usage accounting, TLS/mTLS, failover, cooldowns, and privacy tiers for rented compute.
+
+## Why
+
+Many organizations already own underused Apple Silicon machines. `mi` lets them pool that capacity.
+
+It helps with:
+
+- Local AI capacity for teams that want lower latency and more control.
+- Small-business inference without committing to cloud GPU infrastructure.
+- Shared city or coworking deployments where many users contribute or consume compute.
+- Rented public capacity for non-sensitive workloads.
+- Private routing for sensitive workloads that must stay on trusted nodes.
+
+## What It Does
+
+- Exposes `/v1/chat/completions` and `/v1/models`.
+- Lets each Mac connect outbound as a `node-agent`.
+- Serves local models through Ollama today, with room for MLX-native backends later.
+- Routes by model availability, health, queue depth, capacity, cooldowns, and privacy tier.
+- Retries another node when a provider fails before the first streamed token.
+- Tracks usage for both consumers and providers.
+- Supports API keys, provider tokens, quota limits, dynamic enrollment, rotation, and revocation.
+- Supports HTTPS/WSS and node mTLS.
+- Provides privacy tiers so public rented nodes never receive private prompts.
 
 ## Architecture
 
@@ -22,14 +39,33 @@ flowchart LR
     S --> N1["Mac node-agent + Ollama"]
     S --> N2["Mac node-agent + Ollama"]
     S --> N3["Mac node-agent + Ollama"]
+    A --> L["usage ledger"]
+```
+
+## Requirements
+
+- macOS on provider machines.
+- Apple Silicon recommended.
+- Go 1.23 or newer.
+- Ollama installed on each node.
+- A local model, for example `llama3.1:8b`.
+
+Install the basics:
+
+```bash
+brew install go ollama
+ollama serve
+ollama pull llama3.1:8b
 ```
 
 ## Quickstart
 
-Start Ollama on every Mac node and make sure the desired model exists:
+Clone and build:
 
 ```bash
-ollama pull llama3.1:8b
+git clone https://github.com/raym33/mi.git
+cd mi
+make build
 ```
 
 Run the coordinator:
@@ -57,16 +93,15 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-`fast` is a model alias. The coordinator resolves it to the concrete model advertised by nodes, such as `llama3.1:8b`.
+Run the smoke test:
 
-## Status
+```bash
+make smoke
+```
 
-This is an MVP scaffold. It already includes the core control-plane shape, but the first production hardening pass should add TLS/mTLS, persistent node identities, stronger model management, dashboard auth, and MLX-native backends.
+## City Mode
 
-## City mode
-
-For a shared neighborhood/city deployment, see [`docs/city-network.md`](docs/city-network.md).
-For renting compute while keeping private workloads on trusted nodes, see [`docs/rental-privacy.md`](docs/rental-privacy.md).
+City mode turns `mi` into a small local inference network with consumers, providers, provider tokens, API keys, quotas, and usage accounting.
 
 ```bash
 make run-city-coordinator
@@ -74,7 +109,7 @@ make run-city-node
 make city-smoke
 ```
 
-Enroll city accounts dynamically:
+Enroll accounts dynamically:
 
 ```bash
 CONSUMER_ID=studio-b make city-enroll
@@ -83,7 +118,31 @@ ACTION=rotate CONSUMER_ID=studio-b make city-enroll
 ACTION=disable PROVIDER_ID=neighbor-mac make city-enroll
 ```
 
-Secure transport is covered in [`docs/security.md`](docs/security.md):
+See [City Network](docs/city-network.md).
+
+## Renting Compute Privately
+
+`mi` supports privacy tiers for shared and rented compute:
+
+- `private`: sensitive data, routed only to trusted private nodes.
+- `community`: known shared networks, routed to private or community nodes.
+- `public`: non-sensitive prompts that can use rented public capacity.
+
+If `privacy_tier` is omitted, requests default to `private`.
+
+A public rented provider node can be configured with:
+
+```yaml
+privacy_mode: "public"
+```
+
+That node can receive `public` work, but it will not receive `private` or `community` prompts.
+
+See [Renting Compute Privately](docs/rental-privacy.md).
+
+## Security
+
+For real deployments, use HTTPS/WSS and node mTLS:
 
 ```bash
 make dev-certs
@@ -91,4 +150,47 @@ make run-city-coordinator-tls
 make run-city-node-tls
 ```
 
-The TLS example includes mTLS for node agents.
+See [Security](docs/security.md).
+
+Important: privacy tiers enforce scheduling policy. They do not make prompts cryptographically invisible to the machine performing inference. Sensitive prompts should only be routed to trusted nodes until stronger confidential-compute techniques are implemented.
+
+## Project Status
+
+`mi` is an MVP for local-first distributed inference. It is useful for experimentation, LAN deployments, and early community networks. It is not yet a complete payment network, hosted SaaS, or cryptographically private compute marketplace.
+
+The next major work is pricing, observability, provider reputation, installer polish, MLX-native inference, and stronger private-compute options.
+
+See [Roadmap](ROADMAP.md).
+
+## Contributing
+
+Contributions are welcome. The best current areas are:
+
+- macOS provider installation and LaunchAgent support.
+- Scheduler improvements and benchmarks.
+- Prometheus metrics and dashboard work.
+- MLX backend support.
+- Pricing and provider payout ledger design.
+- Security reviews.
+- Documentation and example deployments.
+
+See [Contributing](CONTRIBUTING.md).
+
+## Development
+
+```bash
+make test
+make build
+```
+
+Useful commands:
+
+```bash
+make smoke
+make city-smoke
+make dev-certs
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
