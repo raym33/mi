@@ -15,6 +15,10 @@ type Envelope struct {
 
 type Register struct {
 	NodeID        string   `json:"node_id"`
+	ProviderID    string   `json:"provider_id,omitempty"`
+	ProviderToken string   `json:"provider_token,omitempty"`
+	PublicName    string   `json:"public_name,omitempty"`
+	City          string   `json:"city,omitempty"`
 	Hostname      string   `json:"hostname"`
 	Arch          string   `json:"arch"`
 	OS            string   `json:"os"`

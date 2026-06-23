@@ -8,6 +8,7 @@ The first version is LAN-first and intentionally small:
 - Each Mac runs a `node-agent` that connects outbound to the coordinator over WebSocket.
 - Nodes serve requests through Ollama today, with the backend boundary ready for MLX later.
 - The scheduler routes by model availability, health, queue depth, memory pressure, and measured latency.
+- City mode lets multiple consumers and providers share compute with API keys, provider tokens, and usage accounting.
 
 ## Architecture
 
@@ -56,3 +57,6 @@ curl http://localhost:8080/v1/chat/completions \
 
 This is an MVP scaffold. It already includes the core control-plane shape, but the first production hardening pass should add TLS/mTLS, persistent node identities, stronger model management, dashboard auth, and MLX-native backends.
 
+## City mode
+
+For a shared neighborhood/city deployment, see [`docs/city-network.md`](docs/city-network.md).

@@ -59,6 +59,10 @@ func (a *agent) run(ctx context.Context) error {
 		Type: "register",
 		Register: &protocol.Register{
 			NodeID:        a.cfg.NodeID,
+			ProviderID:    a.cfg.ProviderID,
+			ProviderToken: a.cfg.ProviderToken,
+			PublicName:    a.cfg.PublicName,
+			City:          a.cfg.City,
 			Hostname:      hostname,
 			Arch:          runtime.GOARCH,
 			OS:            runtime.GOOS,

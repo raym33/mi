@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/config"
 	"github.com/raym33/mi/internal/openai"
 	"github.com/raym33/mi/internal/protocol"
@@ -22,8 +23,9 @@ import (
 )
 
 type server struct {
-	registry *scheduler.Registry
-	apiKeys  map[string]bool
+	registry   *scheduler.Registry
+	market     *city.Market
+	adminToken string
 }
 
 func main() {
@@ -34,33 +36,43 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s := &server{registry: scheduler.NewRegistry(), apiKeys: map[string]bool{}}
-	for _, key := range cfg.APIKeys {
-		s.apiKeys[key] = true
-	}
+	s := &server{registry: scheduler.NewRegistry(), market: city.New(cfg.City, cfg.APIKeys), adminToken: cfg.AdminToken}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
-	mux.HandleFunc("GET /v1/models", s.requireAuth(s.models))
-	mux.HandleFunc("POST /v1/chat/completions", s.requireAuth(s.chatCompletions))
+	mux.HandleFunc("GET /v1/models", s.requireConsumer(s.models))
+	mux.HandleFunc("POST /v1/chat/completions", s.requireConsumer(s.chatCompletions))
 	mux.HandleFunc("GET /ws/node", s.nodeWebSocket)
-	mux.HandleFunc("GET /admin/nodes", s.requireAuth(s.adminNodes))
+	mux.HandleFunc("GET /admin/nodes", s.requireAdmin(s.adminNodes))
+	mux.HandleFunc("GET /admin/city", s.requireAdmin(s.adminCity))
 
 	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
 	log.Fatal(http.ListenAndServe(cfg.ListenAddr, mux))
 }
 
-func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+type contextKey string
+
+const consumerIDKey contextKey = "consumer_id"
+
+func (s *server) requireConsumer(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if len(s.apiKeys) == 0 {
+		consumerID, err := s.market.AuthenticateConsumer(bearerToken(r))
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		r = r.WithContext(context.WithValue(r.Context(), consumerIDKey, consumerID))
+		next(w, r)
+	}
+}
+
+func (s *server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.adminToken == "" {
 			next(w, r)
 			return
 		}
-		token := r.Header.Get("Authorization")
-		if len(token) > 7 && token[:7] == "Bearer " {
-			token = token[7:]
-		}
-		if !s.apiKeys[token] {
+		if bearerToken(r) != s.adminToken {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -86,6 +98,10 @@ func (s *server) adminNodes(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.registry.Snapshot())
 }
 
+func (s *server) adminCity(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.market.Snapshot())
+}
+
 func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	var req openai.ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -109,13 +125,13 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Stream {
-		s.streamChat(w, r, requestID, inferReq)
+		s.streamChat(w, r, requestID, inferReq, consumerID(r.Context()))
 		return
 	}
-	s.blockingChat(w, r, requestID, inferReq)
+	s.blockingChat(w, r, requestID, inferReq, consumerID(r.Context()))
 }
 
-func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID string, req protocol.InferRequest) {
+func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID string, req protocol.InferRequest, consumerID string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -126,11 +142,13 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	w.Header().Set("Connection", "keep-alive")
 
 	sink := sseSink{w: w, flusher: flusher, requestID: requestID, model: req.Model}
-	done, err := s.registry.Dispatch(r.Context(), requestID, req, &sink)
+	result, err := s.registry.Dispatch(r.Context(), requestID, req, &sink)
 	if err != nil {
 		s.writeStreamError(w, flusher, err)
 		return
 	}
+	done := result.Done
+	s.market.Record(consumerID, result.ProviderID, done)
 	finish := done.FinishReason
 	chunk := openai.ChatCompletionChunk{
 		ID:      requestID,
@@ -144,10 +162,10 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	flusher.Flush()
 }
 
-func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, req protocol.InferRequest) {
+func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, req protocol.InferRequest, consumerID string) {
 	var content string
 	sink := collectSink{onChunk: func(chunk string) { content += chunk }}
-	done, err := s.registry.Dispatch(r.Context(), requestID, req, sink)
+	result, err := s.registry.Dispatch(r.Context(), requestID, req, sink)
 	if err != nil {
 		status := http.StatusBadGateway
 		if errors.Is(err, scheduler.ErrNoNode) {
@@ -156,6 +174,8 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 		http.Error(w, err.Error(), status)
 		return
 	}
+	done := result.Done
+	s.market.Record(consumerID, result.ProviderID, done)
 	writeJSON(w, openai.ChatCompletionResponse{
 		ID:      requestID,
 		Object:  "chat.completion",
@@ -196,6 +216,12 @@ func (s *server) nodeWebSocket(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close(websocket.StatusPolicyViolation, "register required")
 		return
 	}
+	providerID, err := s.market.AuthenticateProvider(*first.Register)
+	if err != nil {
+		_ = conn.Close(websocket.StatusPolicyViolation, "provider token required")
+		return
+	}
+	first.Register.ProviderID = providerID
 	nodeID := first.Register.NodeID
 	s.registry.Register(*first.Register, nc)
 	defer s.registry.Remove(nodeID)
@@ -351,4 +377,22 @@ func randomID() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b[:])
+}
+
+func bearerToken(r *http.Request) string {
+	token := r.Header.Get("Authorization")
+	if len(token) > 7 && token[:7] == "Bearer " {
+		return token[7:]
+	}
+	if token != "" {
+		return token
+	}
+	return r.Header.Get("X-API-Key")
+}
+
+func consumerID(ctx context.Context) string {
+	if value, ok := ctx.Value(consumerIDKey).(string); ok && value != "" {
+		return value
+	}
+	return "local"
 }

@@ -28,6 +28,9 @@ type Registry struct {
 
 type Node struct {
 	ID            string
+	ProviderID    string
+	PublicName    string
+	City          string
 	Hostname      string
 	Models        map[string]bool
 	MaxConcurrent int
@@ -41,6 +44,9 @@ type Node struct {
 
 type NodeView struct {
 	ID            string    `json:"id"`
+	ProviderID    string    `json:"provider_id,omitempty"`
+	PublicName    string    `json:"public_name,omitempty"`
+	City          string    `json:"city,omitempty"`
 	Hostname      string    `json:"hostname"`
 	Models        []string  `json:"models"`
 	MaxConcurrent int       `json:"max_concurrent"`
@@ -50,6 +56,12 @@ type NodeView struct {
 	LoadAverage   float64   `json:"load_average"`
 	LastSeen      time.Time `json:"last_seen"`
 	Healthy       bool      `json:"healthy"`
+}
+
+type DispatchResult struct {
+	Done       protocol.InferDone
+	NodeID     string
+	ProviderID string
 }
 
 func NewRegistry() *Registry {
@@ -66,6 +78,9 @@ func (r *Registry) Register(msg protocol.Register, conn NodeConn) {
 	}
 	r.nodes[msg.NodeID] = &Node{
 		ID:            msg.NodeID,
+		ProviderID:    msg.ProviderID,
+		PublicName:    msg.PublicName,
+		City:          msg.City,
 		Hostname:      msg.Hostname,
 		Models:        models,
 		MaxConcurrent: max(1, msg.MaxConcurrent),
@@ -135,6 +150,9 @@ func (r *Registry) Snapshot() []NodeView {
 		sort.Strings(models)
 		out = append(out, NodeView{
 			ID:            node.ID,
+			ProviderID:    node.ProviderID,
+			PublicName:    node.PublicName,
+			City:          node.City,
 			Hostname:      node.Hostname,
 			Models:        models,
 			MaxConcurrent: node.MaxConcurrent,
@@ -150,13 +168,17 @@ func (r *Registry) Snapshot() []NodeView {
 	return out
 }
 
-func (r *Registry) Dispatch(ctx context.Context, requestID string, req protocol.InferRequest, sink StreamSink) (protocol.InferDone, error) {
+func (r *Registry) Dispatch(ctx context.Context, requestID string, req protocol.InferRequest, sink StreamSink) (DispatchResult, error) {
 	node, err := r.reserve(req.Model)
 	if err != nil {
-		return protocol.InferDone{}, err
+		return DispatchResult{}, err
 	}
 	defer r.release(node.ID)
-	return node.Conn.SendInference(ctx, requestID, req, sink)
+	done, err := node.Conn.SendInference(ctx, requestID, req, sink)
+	if err != nil {
+		return DispatchResult{}, err
+	}
+	return DispatchResult{Done: done, NodeID: node.ID, ProviderID: node.ProviderID}, nil
 }
 
 func (r *Registry) reserve(model string) (*Node, error) {

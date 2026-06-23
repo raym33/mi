@@ -10,7 +10,29 @@ import (
 type Coordinator struct {
 	ListenAddr string          `yaml:"listen_addr"`
 	APIKeys    []string        `yaml:"api_keys"`
+	AdminToken string          `yaml:"admin_token"`
+	City       CityConfig      `yaml:"city"`
 	Scheduler  SchedulerConfig `yaml:"scheduler"`
+}
+
+type CityConfig struct {
+	Enabled               bool              `yaml:"enabled"`
+	Name                  string            `yaml:"name"`
+	RequireProviderTokens bool              `yaml:"require_provider_tokens"`
+	Consumers             []ConsumerAccount `yaml:"consumers"`
+	Providers             []ProviderAccount `yaml:"providers"`
+}
+
+type ConsumerAccount struct {
+	ID          string   `yaml:"id"`
+	DisplayName string   `yaml:"display_name"`
+	APIKeys     []string `yaml:"api_keys"`
+}
+
+type ProviderAccount struct {
+	ID          string `yaml:"id"`
+	DisplayName string `yaml:"display_name"`
+	Token       string `yaml:"token"`
 }
 
 type SchedulerConfig struct {
@@ -19,6 +41,10 @@ type SchedulerConfig struct {
 
 type NodeAgent struct {
 	NodeID            string   `yaml:"node_id"`
+	ProviderID        string   `yaml:"provider_id"`
+	ProviderToken     string   `yaml:"provider_token"`
+	PublicName        string   `yaml:"public_name"`
+	City              string   `yaml:"city"`
 	CoordinatorURL    string   `yaml:"coordinator_url"`
 	OllamaURL         string   `yaml:"ollama_url"`
 	Models            []string `yaml:"models"`

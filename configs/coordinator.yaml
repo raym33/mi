@@ -1,4 +1,11 @@
 listen_addr: ":8080"
 api_keys: []
+admin_token: ""
+city:
+  enabled: false
+  name: ""
+  require_provider_tokens: false
+  consumers: []
+  providers: []
 scheduler:
   max_queue_penalty: 8
