@@ -40,8 +40,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
+	mux.HandleFunc("GET /network/status", s.networkStatus)
+	mux.HandleFunc("GET /v1/me", s.requireConsumer(s.me))
 	mux.HandleFunc("GET /v1/models", s.requireConsumer(s.models))
-	mux.HandleFunc("POST /v1/chat/completions", s.requireConsumer(s.chatCompletions))
+	mux.HandleFunc("POST /v1/chat/completions", s.requireConsumerQuota(s.chatCompletions))
 	mux.HandleFunc("GET /ws/node", s.nodeWebSocket)
 	mux.HandleFunc("GET /admin/nodes", s.requireAdmin(s.adminNodes))
 	mux.HandleFunc("GET /admin/city", s.requireAdmin(s.adminCity))
@@ -66,6 +68,21 @@ func (s *server) requireConsumer(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func (s *server) requireConsumerQuota(next http.HandlerFunc) http.HandlerFunc {
+	return s.requireConsumer(func(w http.ResponseWriter, r *http.Request) {
+		if err := s.market.CheckConsumerQuota(consumerID(r.Context())); err != nil {
+			writeJSONStatus(w, http.StatusPaymentRequired, map[string]any{
+				"error": map[string]string{
+					"message": err.Error(),
+					"type":    "quota_exceeded",
+				},
+			})
+			return
+		}
+		next(w, r)
+	})
+}
+
 func (s *server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.adminToken == "" {
@@ -82,6 +99,14 @@ func (s *server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *server) networkStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.registry.NetworkStatus())
+}
+
+func (s *server) me(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.market.ConsumerStatus(consumerID(r.Context())))
 }
 
 func (s *server) models(w http.ResponseWriter, _ *http.Request) {
@@ -361,7 +386,12 @@ func (s collectSink) Chunk(content string) error {
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
+	writeJSONStatus(w, http.StatusOK, value)
+}
+
+func writeJSONStatus(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
 

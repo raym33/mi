@@ -8,6 +8,7 @@ It introduces four primitives:
 - Providers: people contributing Mac compute.
 - Provider tokens: shared secrets that let a node join under a provider account.
 - Usage accounting: requests and tokens are counted for both the consumer and the provider.
+- Consumer quotas: each API key can belong to an account with a token limit.
 
 This is not a payment system yet. It is the base ledger needed before payouts, credits, or quotas.
 
@@ -53,12 +54,26 @@ curl http://localhost:8080/admin/city \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
+Consumers can inspect their own account and remaining quota:
+
+```bash
+curl http://localhost:8080/v1/me \
+  -H 'Authorization: Bearer sk-mi-studio-a-dev'
+```
+
+Anyone can inspect public network capacity:
+
+```bash
+curl http://localhost:8080/network/status
+```
+
 ## What this unlocks
 
 - A local AI cooperative where people contribute idle Macs.
 - Shared inference for small businesses without sending prompts to a cloud API.
 - Internal credits or payouts later, based on measured provider token contribution.
 - Public endpoint on a city VPN, Tailscale network, or reverse proxy.
+- Fair usage limits for schools, coworking spaces, and local AI clubs.
 
 ## Next hardening steps
 

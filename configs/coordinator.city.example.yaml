@@ -7,10 +7,12 @@ city:
   consumers:
     - id: "studio-a"
       display_name: "Studio A"
+      total_token_limit: 250000
       api_keys:
         - "sk-mi-studio-a-dev"
     - id: "dev-shop"
       display_name: "Dev Shop"
+      total_token_limit: 500000
       api_keys:
         - "sk-mi-dev-shop-dev"
   providers:

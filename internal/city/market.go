@@ -12,6 +12,7 @@ import (
 var (
 	ErrUnauthorizedConsumer = errors.New("unauthorized consumer")
 	ErrUnauthorizedProvider = errors.New("unauthorized provider")
+	ErrQuotaExceeded        = errors.New("consumer token quota exceeded")
 )
 
 type Market struct {
@@ -29,8 +30,9 @@ type Market struct {
 }
 
 type Consumer struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
+	ID              string `json:"id"`
+	DisplayName     string `json:"display_name"`
+	TotalTokenLimit int64  `json:"total_token_limit,omitempty"`
 }
 
 type Provider struct {
@@ -54,6 +56,13 @@ type Snapshot struct {
 	Providers     []Provider `json:"providers"`
 	ConsumerUsage []Usage    `json:"consumer_usage"`
 	ProviderUsage []Usage    `json:"provider_usage"`
+}
+
+type ConsumerStatus struct {
+	Consumer        Consumer `json:"consumer"`
+	Usage           Usage    `json:"usage"`
+	RemainingTokens int64    `json:"remaining_tokens,omitempty"`
+	QuotaExceeded   bool     `json:"quota_exceeded"`
 }
 
 func New(cfg config.CityConfig, legacyAPIKeys []string) *Market {
@@ -80,7 +89,7 @@ func New(cfg config.CityConfig, legacyAPIKeys []string) *Market {
 		if consumer.ID == "" {
 			continue
 		}
-		m.consumers[consumer.ID] = Consumer{ID: consumer.ID, DisplayName: consumer.DisplayName}
+		m.consumers[consumer.ID] = Consumer{ID: consumer.ID, DisplayName: consumer.DisplayName, TotalTokenLimit: consumer.TotalTokenLimit}
 		for _, key := range consumer.APIKeys {
 			if key != "" {
 				m.apiKeys[key] = consumer.ID
@@ -116,6 +125,20 @@ func (m *Market) AuthenticateConsumer(key string) (string, error) {
 	return accountID, nil
 }
 
+func (m *Market) CheckConsumerQuota(accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	consumer, ok := m.consumers[accountID]
+	if !ok || consumer.TotalTokenLimit <= 0 {
+		return nil
+	}
+	usage := m.consumerUse[accountID]
+	if usage != nil && usage.TotalTokens >= consumer.TotalTokenLimit {
+		return ErrQuotaExceeded
+	}
+	return nil
+}
+
 func (m *Market) AuthenticateProvider(reg protocol.Register) (string, error) {
 	if !m.enabled || !m.requireProviderTokens {
 		if reg.ProviderID != "" {
@@ -139,6 +162,30 @@ func (m *Market) Record(consumerID, providerID string, done protocol.InferDone) 
 	if providerID != "" {
 		m.addUsage(m.providerUse, providerID, done)
 	}
+}
+
+func (m *Market) ConsumerStatus(accountID string) ConsumerStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	consumer := m.consumers[accountID]
+	if consumer.ID == "" {
+		consumer = Consumer{ID: accountID, DisplayName: accountID}
+	}
+	var usage Usage
+	if current := m.consumerUse[accountID]; current != nil {
+		usage = *current
+	} else {
+		usage = Usage{AccountID: accountID}
+	}
+	status := ConsumerStatus{Consumer: consumer, Usage: usage}
+	if consumer.TotalTokenLimit > 0 {
+		status.RemainingTokens = consumer.TotalTokenLimit - usage.TotalTokens
+		if status.RemainingTokens < 0 {
+			status.RemainingTokens = 0
+		}
+		status.QuotaExceeded = usage.TotalTokens >= consumer.TotalTokenLimit
+	}
+	return status
 }
 
 func (m *Market) addUsage(bucket map[string]*Usage, accountID string, done protocol.InferDone) {

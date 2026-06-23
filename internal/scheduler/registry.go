@@ -58,6 +58,17 @@ type NodeView struct {
 	Healthy       bool      `json:"healthy"`
 }
 
+type NetworkStatus struct {
+	Nodes             int      `json:"nodes"`
+	HealthyNodes      int      `json:"healthy_nodes"`
+	ActiveRequests    int      `json:"active_requests"`
+	MaxConcurrent     int      `json:"max_concurrent"`
+	AvailableSlots    int      `json:"available_slots"`
+	TotalMemoryFreeMB uint64   `json:"total_memory_free_mb"`
+	Models            []string `json:"models"`
+	Cities            []string `json:"cities,omitempty"`
+}
+
 type DispatchResult struct {
 	Done       protocol.InferDone
 	NodeID     string
@@ -166,6 +177,42 @@ func (r *Registry) Snapshot() []NodeView {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+func (r *Registry) NetworkStatus() NetworkStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	models := map[string]bool{}
+	cities := map[string]bool{}
+	status := NetworkStatus{Nodes: len(r.nodes)}
+	for _, node := range r.nodes {
+		if !node.healthy() {
+			continue
+		}
+		status.HealthyNodes++
+		status.ActiveRequests += node.Active
+		status.MaxConcurrent += node.MaxConcurrent
+		status.TotalMemoryFreeMB += node.MemoryFreeMB
+		if node.MaxConcurrent > node.Active {
+			status.AvailableSlots += node.MaxConcurrent - node.Active
+		}
+		for model := range node.Models {
+			models[model] = true
+		}
+		if node.City != "" {
+			cities[node.City] = true
+		}
+	}
+	for model := range models {
+		status.Models = append(status.Models, model)
+	}
+	for city := range cities {
+		status.Cities = append(status.Cities, city)
+	}
+	sort.Strings(status.Models)
+	sort.Strings(status.Cities)
+	return status
 }
 
 func (r *Registry) Dispatch(ctx context.Context, requestID string, req protocol.InferRequest, sink StreamSink) (DispatchResult, error) {

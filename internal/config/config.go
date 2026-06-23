@@ -24,9 +24,10 @@ type CityConfig struct {
 }
 
 type ConsumerAccount struct {
-	ID          string   `yaml:"id"`
-	DisplayName string   `yaml:"display_name"`
-	APIKeys     []string `yaml:"api_keys"`
+	ID              string   `yaml:"id"`
+	DisplayName     string   `yaml:"display_name"`
+	APIKeys         []string `yaml:"api_keys"`
+	TotalTokenLimit int64    `yaml:"total_token_limit"`
 }
 
 type ProviderAccount struct {
