@@ -47,11 +47,13 @@ Call the cluster:
 curl http://localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "llama3.1:8b",
+    "model": "fast",
     "messages": [{"role": "user", "content": "Say hello from the Mac fleet"}],
     "stream": true
   }'
 ```
+
+`fast` is a model alias. The coordinator resolves it to the concrete model advertised by nodes, such as `llama3.1:8b`.
 
 ## Status
 

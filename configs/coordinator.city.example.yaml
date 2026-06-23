@@ -23,5 +23,17 @@ city:
     - id: "studio-node"
       display_name: "Studio Node"
       token: "pk-mi-studio-node-dev"
+models:
+  aliases:
+    - id: "fast"
+      target: "llama3.1:8b"
+      display_name: "Fast local"
+      description: "Low-latency shared assistant"
+      tags: ["general", "fast"]
+    - id: "private"
+      target: "llama3.1:8b"
+      display_name: "Private local"
+      description: "Private city-network assistant"
+      tags: ["private", "general"]
 scheduler:
   max_queue_penalty: 8

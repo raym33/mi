@@ -12,5 +12,12 @@ city:
   usage_store_path: ""
   consumers: []
   providers: []
+models:
+  aliases:
+    - id: "fast"
+      target: "llama3.1:8b"
+      display_name: "Fast local"
+      description: "Default fast local assistant"
+      tags: ["general", "fast"]
 scheduler:
   max_queue_penalty: 8

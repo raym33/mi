@@ -19,6 +19,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/config"
+	"github.com/raym33/mi/internal/modelcatalog"
 	"github.com/raym33/mi/internal/openai"
 	"github.com/raym33/mi/internal/protocol"
 	"github.com/raym33/mi/internal/scheduler"
@@ -28,6 +29,7 @@ import (
 type server struct {
 	registry              *scheduler.Registry
 	market                *city.Market
+	modelCatalog          *modelcatalog.Catalog
 	adminToken            string
 	requireNodeClientCert bool
 }
@@ -47,6 +49,7 @@ func main() {
 	s := &server{
 		registry:              scheduler.NewRegistry(),
 		market:                market,
+		modelCatalog:          modelcatalog.New(cfg.Models),
 		adminToken:            cfg.AdminToken,
 		requireNodeClientCert: cfg.TLS.NodeClientCAFile != "",
 	}
@@ -56,6 +59,7 @@ func main() {
 	mux.HandleFunc("GET /network/status", s.networkStatus)
 	mux.HandleFunc("GET /v1/me", s.requireConsumer(s.me))
 	mux.HandleFunc("GET /v1/models", s.requireConsumer(s.models))
+	mux.HandleFunc("GET /v1/models/catalog", s.requireConsumer(s.modelsCatalog))
 	mux.HandleFunc("POST /v1/chat/completions", s.requireConsumerQuota(s.chatCompletions))
 	mux.HandleFunc("GET /ws/node", s.nodeWebSocket)
 	mux.HandleFunc("GET /admin/nodes", s.requireAdmin(s.adminNodes))
@@ -130,12 +134,16 @@ func (s *server) me(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) models(w http.ResponseWriter, _ *http.Request) {
 	now := time.Now().Unix()
-	models := s.registry.Models()
+	models := s.modelCatalog.VisibleModelIDs(s.registry.Models())
 	data := make([]openai.Model, 0, len(models))
 	for _, model := range models {
 		data = append(data, openai.Model{ID: model, Object: "model", Created: now, OwnedBy: "mi"})
 	}
 	writeJSON(w, openai.ModelList{Object: "list", Data: data})
+}
+
+func (s *server) modelsCatalog(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.modelCatalog.Catalog(s.registry.Models()))
 }
 
 func (s *server) adminNodes(w http.ResponseWriter, _ *http.Request) {
@@ -223,8 +231,9 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestID := "chatcmpl-" + randomID()
+	modelResolution := s.modelCatalog.Resolve(req.Model)
 	inferReq := protocol.InferRequest{
-		Model:       req.Model,
+		Model:       modelResolution.Target,
 		Stream:      req.Stream,
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
@@ -234,13 +243,13 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Stream {
-		s.streamChat(w, r, requestID, inferReq, consumerID(r.Context()))
+		s.streamChat(w, r, requestID, req.Model, inferReq, consumerID(r.Context()))
 		return
 	}
-	s.blockingChat(w, r, requestID, inferReq, consumerID(r.Context()))
+	s.blockingChat(w, r, requestID, req.Model, inferReq, consumerID(r.Context()))
 }
 
-func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID string, req protocol.InferRequest, consumerID string) {
+func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -250,7 +259,7 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	sink := sseSink{w: w, flusher: flusher, requestID: requestID, model: req.Model}
+	sink := sseSink{w: w, flusher: flusher, requestID: requestID, model: responseModel}
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, &sink)
 	if err != nil {
 		s.writeStreamError(w, flusher, err)
@@ -265,7 +274,7 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 		ID:      requestID,
 		Object:  "chat.completion.chunk",
 		Created: time.Now().Unix(),
-		Model:   req.Model,
+		Model:   responseModel,
 		Choices: []openai.ChunkChoice{{Index: 0, Delta: openai.ChatMessage{}, FinishReason: &finish}},
 	}
 	writeSSE(w, flusher, chunk)
@@ -273,7 +282,7 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	flusher.Flush()
 }
 
-func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, req protocol.InferRequest, consumerID string) {
+func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string) {
 	var content string
 	sink := collectSink{onChunk: func(chunk string) { content += chunk }}
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, sink)
@@ -293,7 +302,7 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 		ID:      requestID,
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
-		Model:   req.Model,
+		Model:   responseModel,
 		Choices: []openai.ResponseChoice{{
 			Index:        0,
 			Message:      openai.ChatMessage{Role: "assistant", Content: content},

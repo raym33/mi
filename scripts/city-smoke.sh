@@ -4,7 +4,7 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 API_KEY="${API_KEY:-sk-mi-studio-a-dev}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-admin-dev-token}"
-MODEL="${MODEL:-llama3.1:8b}"
+MODEL="${MODEL:-fast}"
 
 echo "== public network status =="
 curl -fsS "$BASE_URL/network/status"

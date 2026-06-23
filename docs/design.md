@@ -10,6 +10,7 @@
 - Ollama first for speed, MLX next for Apple Silicon performance.
 - Scheduler decisions should be based on observed behavior, not static specs.
 - Prompt logging is off by design; logs should use request IDs, model IDs, and timing.
+- Users call stable aliases like `fast` or `code`; the coordinator maps those to concrete node models.
 
 ## Request flow
 
@@ -30,4 +31,3 @@
 - LaunchAgent installer for macOS nodes.
 - Prometheus metrics.
 - Retry on a second node when failure happens before first token.
-

@@ -149,10 +149,19 @@ curl http://localhost:8080/v1/chat/completions \
   -H 'Authorization: Bearer sk-mi-studio-a-dev' \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "llama3.1:8b",
+    "model": "fast",
     "messages": [{"role": "user", "content": "Explain what this city AI network is in one sentence"}],
     "stream": true
   }'
+```
+
+Model aliases are configured under `models.aliases`. For example, `fast` can point to `llama3.1:8b`, while a future `code` alias can point to a coding model. The OpenAI-compatible model list only shows aliases whose concrete target is currently available on at least one healthy node.
+
+Inspect the richer catalog:
+
+```bash
+curl http://localhost:8080/v1/models/catalog \
+  -H 'Authorization: Bearer sk-mi-studio-a-dev'
 ```
 
 ## Inspect usage

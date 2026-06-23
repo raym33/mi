@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -12,6 +13,9 @@ import (
 
 	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/config"
+	"github.com/raym33/mi/internal/modelcatalog"
+	"github.com/raym33/mi/internal/openai"
+	"github.com/raym33/mi/internal/protocol"
 	"github.com/raym33/mi/internal/scheduler"
 )
 
@@ -23,7 +27,7 @@ func TestAdminEnrollmentRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new market: %v", err)
 	}
-	s := &server{registry: scheduler.NewRegistry(), market: market, adminToken: "admin-test"}
+	s := &server{registry: scheduler.NewRegistry(), market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), adminToken: "admin-test"}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /admin/consumers", s.requireAdmin(s.adminCreateConsumer))
@@ -68,7 +72,7 @@ func TestNodeWebSocketRequiresClientCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new market: %v", err)
 	}
-	s := &server{registry: scheduler.NewRegistry(), market: market, requireNodeClientCert: true}
+	s := &server{registry: scheduler.NewRegistry(), market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), requireNodeClientCert: true}
 
 	req := httptest.NewRequest(http.MethodGet, "/ws/node", nil)
 	rec := httptest.NewRecorder()
@@ -84,6 +88,48 @@ func TestNodeWebSocketRequiresClientCertificate(t *testing.T) {
 	if rec.Code == http.StatusUnauthorized {
 		t.Fatal("request with client cert should pass mTLS gate")
 	}
+}
+
+func TestModelAliasesAppearWhenTargetAvailable(t *testing.T) {
+	market, err := city.New(config.CityConfig{}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{NodeID: "node-a", Models: []string{"llama3.1:8b"}}, noopNodeConn{})
+	s := &server{
+		registry: registry,
+		market:   market,
+		modelCatalog: modelcatalog.New(config.ModelConfig{Aliases: []config.ModelAlias{{
+			ID:          "fast",
+			Target:      "llama3.1:8b",
+			DisplayName: "Fast local",
+		}}}),
+	}
+
+	models := doJSON[openai.ModelList](t, http.HandlerFunc(s.models), http.MethodGet, "/v1/models", ``)
+	ids := map[string]bool{}
+	for _, model := range models.Data {
+		ids[model.ID] = true
+	}
+	if !ids["fast"] || !ids["llama3.1:8b"] {
+		t.Fatalf("models = %+v, want alias and concrete model", models.Data)
+	}
+
+	catalog := doJSON[modelcatalog.CatalogResponse](t, http.HandlerFunc(s.modelsCatalog), http.MethodGet, "/v1/models/catalog", ``)
+	if len(catalog.Data) != 2 || catalog.Data[0].ID != "fast" || !catalog.Data[0].Available {
+		t.Fatalf("catalog = %+v, want available fast alias first", catalog.Data)
+	}
+}
+
+type noopNodeConn struct{}
+
+func (noopNodeConn) SendInference(context.Context, string, protocol.InferRequest, scheduler.StreamSink) (protocol.InferDone, error) {
+	return protocol.InferDone{}, nil
+}
+
+func (noopNodeConn) Close() error {
+	return nil
 }
 
 func doJSON[T any](t *testing.T, handler http.Handler, method, path, body string) T {

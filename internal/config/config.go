@@ -13,6 +13,7 @@ type Coordinator struct {
 	AdminToken string          `yaml:"admin_token"`
 	TLS        ServerTLSConfig `yaml:"tls"`
 	City       CityConfig      `yaml:"city"`
+	Models     ModelConfig     `yaml:"models"`
 	Scheduler  SchedulerConfig `yaml:"scheduler"`
 }
 
@@ -42,6 +43,19 @@ type ProviderAccount struct {
 	ID          string `yaml:"id"`
 	DisplayName string `yaml:"display_name"`
 	Token       string `yaml:"token"`
+}
+
+type ModelConfig struct {
+	Aliases []ModelAlias `yaml:"aliases"`
+}
+
+type ModelAlias struct {
+	ID            string   `yaml:"id"`
+	Target        string   `yaml:"target"`
+	DisplayName   string   `yaml:"display_name"`
+	Description   string   `yaml:"description"`
+	Tags          []string `yaml:"tags"`
+	ContextWindow int      `yaml:"context_window"`
 }
 
 type SchedulerConfig struct {

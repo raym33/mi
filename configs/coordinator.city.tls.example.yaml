@@ -19,5 +19,12 @@ city:
     - id: "ray-home"
       display_name: "Ray Home Macs"
       token: "pk-mi-ray-home-dev"
+models:
+  aliases:
+    - id: "fast"
+      target: "llama3.1:8b"
+      display_name: "Fast local"
+      description: "Low-latency shared assistant"
+      tags: ["general", "fast"]
 scheduler:
   max_queue_penalty: 8

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
-MODEL="${MODEL:-llama3.1:8b}"
+MODEL="${MODEL:-fast}"
 
 curl "$BASE_URL/v1/models"
 printf '\n'
@@ -15,4 +15,3 @@ curl "$BASE_URL/v1/chat/completions" \
     \"stream\": true
   }"
 printf '\n'
-
