@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/raym33/mi/internal/config"
+	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
 )
 
@@ -25,6 +26,7 @@ var (
 	ErrAccountExists        = errors.New("account already exists")
 	ErrAccountNotFound      = errors.New("account not found")
 	ErrAccountDisabled      = errors.New("account disabled")
+	ErrInvalidPrivacy       = errors.New("invalid privacy policy")
 )
 
 type Market struct {
@@ -42,6 +44,7 @@ type Market struct {
 	tokenHashes  map[string]string
 	consumerUse  map[string]*Usage
 	providerUse  map[string]*Usage
+	reservedUse  map[string]int64
 }
 
 type persistedState struct {
@@ -62,10 +65,12 @@ type persistedConsumer struct {
 }
 
 type persistedProvider struct {
-	ID          string   `json:"id"`
-	DisplayName string   `json:"display_name"`
-	Disabled    bool     `json:"disabled,omitempty"`
-	TokenHashes []string `json:"token_hashes,omitempty"`
+	ID           string   `json:"id"`
+	DisplayName  string   `json:"display_name"`
+	Disabled     bool     `json:"disabled,omitempty"`
+	PrivacyMode  string   `json:"privacy_mode,omitempty"`
+	PrivacyTiers []string `json:"privacy_tiers,omitempty"`
+	TokenHashes  []string `json:"token_hashes,omitempty"`
 }
 
 type Consumer struct {
@@ -76,9 +81,11 @@ type Consumer struct {
 }
 
 type Provider struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
-	Disabled    bool   `json:"disabled,omitempty"`
+	ID           string   `json:"id"`
+	DisplayName  string   `json:"display_name"`
+	Disabled     bool     `json:"disabled,omitempty"`
+	PrivacyMode  string   `json:"privacy_mode,omitempty"`
+	PrivacyTiers []string `json:"privacy_tiers,omitempty"`
 }
 
 type Usage struct {
@@ -102,6 +109,7 @@ type Snapshot struct {
 type ConsumerStatus struct {
 	Consumer        Consumer `json:"consumer"`
 	Usage           Usage    `json:"usage"`
+	ReservedTokens  int64    `json:"reserved_tokens,omitempty"`
 	RemainingTokens int64    `json:"remaining_tokens,omitempty"`
 	QuotaExceeded   bool     `json:"quota_exceeded"`
 }
@@ -118,8 +126,10 @@ type CreatedConsumer struct {
 }
 
 type CreateProviderInput struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
+	ID           string   `json:"id"`
+	DisplayName  string   `json:"display_name"`
+	PrivacyMode  string   `json:"privacy_mode,omitempty"`
+	PrivacyTiers []string `json:"privacy_tiers,omitempty"`
 }
 
 type CreatedProvider struct {
@@ -141,6 +151,7 @@ func New(cfg config.CityConfig, legacyAPIKeys []string) (*Market, error) {
 		tokenHashes:           map[string]string{},
 		consumerUse:           map[string]*Usage{},
 		providerUse:           map[string]*Usage{},
+		reservedUse:           map[string]int64{},
 	}
 	if cfg.UsageStorePath != "" {
 		if err := m.loadState(cfg.UsageStorePath); err != nil {
@@ -179,7 +190,11 @@ func New(cfg config.CityConfig, legacyAPIKeys []string) (*Market, error) {
 			continue
 		}
 		disabled := m.providers[provider.ID].Disabled
-		m.providers[provider.ID] = Provider{ID: provider.ID, DisplayName: provider.DisplayName, Disabled: disabled}
+		privacyMode, privacyTiers, err := providerPrivacy(provider.PrivacyMode, provider.PrivacyTiers)
+		if err != nil {
+			return nil, err
+		}
+		m.providers[provider.ID] = Provider{ID: provider.ID, DisplayName: provider.DisplayName, Disabled: disabled, PrivacyMode: privacyMode, PrivacyTiers: privacyTiers}
 		if provider.Token != "" && !disabled {
 			m.tokens[provider.Token] = provider.ID
 			m.tokenHashes[hashSecret(provider.Token)] = provider.ID
@@ -233,7 +248,11 @@ func (m *Market) CreateProvider(input CreateProviderInput) (CreatedProvider, err
 	if _, exists := m.providers[id]; exists {
 		return CreatedProvider{}, ErrAccountExists
 	}
-	provider := Provider{ID: id, DisplayName: displayName(input.DisplayName, id)}
+	privacyMode, privacyTiers, err := providerPrivacy(input.PrivacyMode, input.PrivacyTiers)
+	if err != nil {
+		return CreatedProvider{}, ErrInvalidPrivacy
+	}
+	provider := Provider{ID: id, DisplayName: displayName(input.DisplayName, id), PrivacyMode: privacyMode, PrivacyTiers: privacyTiers}
 	m.providers[id] = provider
 	m.tokenHashes[hashSecret(token)] = id
 	if err := m.persistLocked(); err != nil {
@@ -356,12 +375,68 @@ func (m *Market) AuthenticateConsumer(key string) (string, error) {
 func (m *Market) CheckConsumerQuota(accountID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.checkConsumerQuotaLocked(accountID, 0)
+}
+
+type QuotaReservation struct {
+	accountID string
+	tokens    int64
+}
+
+func (m *Market) ReserveConsumerQuota(accountID string, estimatedTokens int64) (*QuotaReservation, error) {
+	if estimatedTokens < 0 {
+		estimatedTokens = 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkConsumerQuotaLocked(accountID, estimatedTokens); err != nil {
+		return nil, err
+	}
+	if estimatedTokens == 0 {
+		return nil, nil
+	}
+	consumer, ok := m.consumers[accountID]
+	if !ok || consumer.TotalTokenLimit <= 0 {
+		return nil, nil
+	}
+	m.reservedUse[accountID] += estimatedTokens
+	return &QuotaReservation{accountID: accountID, tokens: estimatedTokens}, nil
+}
+
+func (m *Market) ReleaseReservation(reservation *QuotaReservation) {
+	if reservation == nil || reservation.tokens <= 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.releaseReservationLocked(reservation)
+}
+
+func (m *Market) RecordReserved(reservation *QuotaReservation, consumerID, providerID string, done protocol.InferDone) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.releaseReservationLocked(reservation)
+	m.addUsage(m.consumerUse, consumerID, done)
+	if providerID != "" {
+		m.addUsage(m.providerUse, providerID, done)
+	}
+	return m.persistLocked()
+}
+
+func (m *Market) checkConsumerQuotaLocked(accountID string, additionalTokens int64) error {
 	consumer, ok := m.consumers[accountID]
 	if !ok || consumer.TotalTokenLimit <= 0 {
 		return nil
 	}
 	usage := m.consumerUse[accountID]
-	if usage != nil && usage.TotalTokens >= consumer.TotalTokenLimit {
+	used := m.reservedUse[accountID] + additionalTokens
+	if usage != nil {
+		used += usage.TotalTokens
+	}
+	if additionalTokens == 0 && used >= consumer.TotalTokenLimit {
+		return ErrQuotaExceeded
+	}
+	if additionalTokens > 0 && used > consumer.TotalTokenLimit {
 		return ErrQuotaExceeded
 	}
 	return nil
@@ -383,6 +458,43 @@ func (m *Market) AuthenticateProvider(reg protocol.Register) (string, error) {
 		return m.activeProviderIDLocked(providerID)
 	}
 	return "", ErrUnauthorizedProvider
+}
+
+func (m *Market) EnforceProviderPrivacy(providerID string, requestedMode string, requestedTiers []string) (string, []string, error) {
+	requested, err := requestedPrivacy(requestedMode, requestedTiers)
+	if err != nil {
+		return "", nil, ErrInvalidPrivacy
+	}
+	if !m.enabled || !m.requireProviderTokens {
+		return privacy.ModeForTiers(requested), requested, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	provider, ok := m.providers[providerID]
+	if !ok || provider.Disabled {
+		return "", nil, ErrUnauthorizedProvider
+	}
+	allowed := provider.PrivacyTiers
+	if len(allowed) == 0 {
+		allowed, err = privacy.TiersForMode(provider.PrivacyMode)
+		if err != nil {
+			return "", nil, ErrInvalidPrivacy
+		}
+	}
+	allowedSet := map[string]bool{}
+	for _, tier := range allowed {
+		allowedSet[tier] = true
+	}
+	effective := []string{}
+	for _, tier := range requested {
+		if allowedSet[tier] {
+			effective = append(effective, tier)
+		}
+	}
+	if len(effective) == 0 {
+		return "", nil, ErrInvalidPrivacy
+	}
+	return privacy.ModeForTiers(effective), effective, nil
 }
 
 func (m *Market) Record(consumerID, providerID string, done protocol.InferDone) error {
@@ -410,11 +522,12 @@ func (m *Market) ConsumerStatus(accountID string) ConsumerStatus {
 	}
 	status := ConsumerStatus{Consumer: consumer, Usage: usage}
 	if consumer.TotalTokenLimit > 0 {
-		status.RemainingTokens = consumer.TotalTokenLimit - usage.TotalTokens
+		status.ReservedTokens = m.reservedUse[accountID]
+		status.RemainingTokens = consumer.TotalTokenLimit - usage.TotalTokens - status.ReservedTokens
 		if status.RemainingTokens < 0 {
 			status.RemainingTokens = 0
 		}
-		status.QuotaExceeded = usage.TotalTokens >= consumer.TotalTokenLimit
+		status.QuotaExceeded = usage.TotalTokens+status.ReservedTokens >= consumer.TotalTokenLimit
 	}
 	return status
 }
@@ -474,7 +587,11 @@ func (m *Market) loadState(path string) error {
 		}
 	}
 	for _, provider := range snapshot.Providers {
-		m.providers[provider.ID] = Provider{ID: provider.ID, DisplayName: provider.DisplayName, Disabled: provider.Disabled}
+		privacyMode, privacyTiers, err := providerPrivacy(provider.PrivacyMode, provider.PrivacyTiers)
+		if err != nil {
+			return err
+		}
+		m.providers[provider.ID] = Provider{ID: provider.ID, DisplayName: provider.DisplayName, Disabled: provider.Disabled, PrivacyMode: privacyMode, PrivacyTiers: privacyTiers}
 		for _, hash := range provider.TokenHashes {
 			m.tokenHashes[hash] = provider.ID
 		}
@@ -534,13 +651,27 @@ func (m *Market) persistedProvidersLocked() []persistedProvider {
 	providers := make([]persistedProvider, 0, len(m.providers))
 	for _, provider := range providerMapValues(m.providers) {
 		providers = append(providers, persistedProvider{
-			ID:          provider.ID,
-			DisplayName: provider.DisplayName,
-			Disabled:    provider.Disabled,
-			TokenHashes: hashesForAccount(m.tokenHashes, provider.ID),
+			ID:           provider.ID,
+			DisplayName:  provider.DisplayName,
+			Disabled:     provider.Disabled,
+			PrivacyMode:  provider.PrivacyMode,
+			PrivacyTiers: provider.PrivacyTiers,
+			TokenHashes:  hashesForAccount(m.tokenHashes, provider.ID),
 		})
 	}
 	return providers
+}
+
+func (m *Market) releaseReservationLocked(reservation *QuotaReservation) {
+	if reservation == nil || reservation.tokens <= 0 {
+		return
+	}
+	current := m.reservedUse[reservation.accountID]
+	if current <= reservation.tokens {
+		delete(m.reservedUse, reservation.accountID)
+		return
+	}
+	m.reservedUse[reservation.accountID] = current - reservation.tokens
 }
 
 func consumerMapValues(items map[string]Consumer) []Consumer {
@@ -656,4 +787,27 @@ func displayName(raw, fallback string) string {
 		return fallback
 	}
 	return name
+}
+
+func providerPrivacy(mode string, tiers []string) (string, []string, error) {
+	normalized, err := requestedPrivacy(mode, tiers)
+	if err != nil {
+		return "", nil, err
+	}
+	return privacy.ModeForTiers(normalized), normalized, nil
+}
+
+func requestedPrivacy(mode string, tiers []string) ([]string, error) {
+	if len(tiers) > 0 {
+		normalized, err := privacy.NormalizeTiers(tiers)
+		if err != nil {
+			return nil, ErrInvalidPrivacy
+		}
+		return normalized, nil
+	}
+	normalized, err := privacy.TiersForMode(mode)
+	if err != nil {
+		return nil, ErrInvalidPrivacy
+	}
+	return normalized, nil
 }

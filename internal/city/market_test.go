@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/raym33/mi/internal/config"
+	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
 )
 
@@ -260,5 +261,99 @@ func TestProviderTokenRequired(t *testing.T) {
 	}
 	if providerID != "provider-a" {
 		t.Fatalf("provider id = %q, want provider-a", providerID)
+	}
+}
+
+func TestProviderPrivacyPolicyLimitsNodeClaims(t *testing.T) {
+	market, err := New(config.CityConfig{
+		Enabled:               true,
+		RequireProviderTokens: true,
+		Providers: []config.ProviderAccount{{
+			ID:          "rented-provider",
+			Token:       "pk-test",
+			PrivacyMode: privacy.Public,
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+
+	providerID, err := market.AuthenticateProvider(protocol.Register{ProviderToken: "pk-test"})
+	if err != nil {
+		t.Fatalf("authenticate provider: %v", err)
+	}
+	mode, tiers, err := market.EnforceProviderPrivacy(providerID, privacy.Private, nil)
+	if err != nil {
+		t.Fatalf("enforce provider privacy: %v", err)
+	}
+	if mode != privacy.Public || len(tiers) != 1 || tiers[0] != privacy.Public {
+		t.Fatalf("effective privacy = mode %q tiers %v, want public only", mode, tiers)
+	}
+	if _, _, err := market.EnforceProviderPrivacy(providerID, "", []string{privacy.Private}); !errors.Is(err, ErrInvalidPrivacy) {
+		t.Fatalf("private-only node claim = %v, want ErrInvalidPrivacy", err)
+	}
+}
+
+func TestProviderPrivacyPolicyPersists(t *testing.T) {
+	usagePath := filepath.Join(t.TempDir(), "city-state.json")
+	cfg := config.CityConfig{
+		Enabled:               true,
+		RequireProviderTokens: true,
+		UsageStorePath:        usagePath,
+	}
+	market, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	created, err := market.CreateProvider(CreateProviderInput{ID: "provider-a", PrivacyMode: privacy.Public})
+	if err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+	restarted, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("restart market: %v", err)
+	}
+	providerID, err := restarted.AuthenticateProvider(protocol.Register{ProviderToken: created.ProviderToken})
+	if err != nil {
+		t.Fatalf("authenticate restarted provider: %v", err)
+	}
+	mode, tiers, err := restarted.EnforceProviderPrivacy(providerID, privacy.Private, nil)
+	if err != nil {
+		t.Fatalf("enforce restarted privacy: %v", err)
+	}
+	if mode != privacy.Public || len(tiers) != 1 || tiers[0] != privacy.Public {
+		t.Fatalf("effective privacy after restart = mode %q tiers %v, want public only", mode, tiers)
+	}
+}
+
+func TestQuotaReservationsPreventConcurrentOverspend(t *testing.T) {
+	market, err := New(config.CityConfig{
+		Enabled: true,
+		Consumers: []config.ConsumerAccount{{
+			ID:              "studio",
+			APIKeys:         []string{"sk-test"},
+			TotalTokenLimit: 100,
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	first, err := market.ReserveConsumerQuota("studio", 80)
+	if err != nil {
+		t.Fatalf("first reservation: %v", err)
+	}
+	if _, err := market.ReserveConsumerQuota("studio", 30); !errors.Is(err, ErrQuotaExceeded) {
+		t.Fatalf("second reservation = %v, want ErrQuotaExceeded", err)
+	}
+	status := market.ConsumerStatus("studio")
+	if status.ReservedTokens != 80 || status.RemainingTokens != 20 {
+		t.Fatalf("status with reservation = %+v, want reserved=80 remaining=20", status)
+	}
+	if err := market.RecordReserved(first, "studio", "provider-a", protocol.InferDone{PromptTokens: 10, OutputTokens: 20}); err != nil {
+		t.Fatalf("record reserved: %v", err)
+	}
+	status = market.ConsumerStatus("studio")
+	if status.ReservedTokens != 0 || status.Usage.TotalTokens != 30 || status.RemainingTokens != 70 {
+		t.Fatalf("status after record = %+v, want used=30 remaining=70", status)
 	}
 }

@@ -27,8 +27,9 @@ It helps with:
 - Retries another node when a provider fails before the first streamed token.
 - Tracks usage for both consumers and providers.
 - Supports API keys, provider tokens, quota limits, dynamic enrollment, rotation, and revocation.
+- Reserves quota before dispatch so concurrent requests cannot spend the same budget twice.
 - Supports HTTPS/WSS and node mTLS.
-- Provides privacy tiers so public rented nodes never receive private prompts.
+- Enforces provider-side privacy policy so public rented nodes never receive private prompts.
 
 ## Architecture
 
@@ -136,7 +137,7 @@ A public rented provider node can be configured with:
 privacy_mode: "public"
 ```
 
-That node can receive `public` work, but it will not receive `private` or `community` prompts.
+Set the same policy on the provider account in the coordinator. The coordinator enforces the provider account policy, so a node cannot elevate itself from `public` to `private` by changing its local config.
 
 See [Renting Compute Privately](docs/rental-privacy.md).
 
@@ -151,6 +152,8 @@ make run-city-node-tls
 ```
 
 See [Security](docs/security.md).
+
+Admin endpoints require `admin_token` by default. For throwaway local development only, set `dev_admin_open: true`.
 
 Important: privacy tiers enforce scheduling policy. They do not make prompts cryptographically invisible to the machine performing inference. Sensitive prompts should only be routed to trusted nodes until stronger confidential-compute techniques are implemented.
 

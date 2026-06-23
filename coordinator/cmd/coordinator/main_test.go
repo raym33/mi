@@ -67,6 +67,27 @@ func TestAdminEnrollmentRoutes(t *testing.T) {
 	}
 }
 
+func TestAdminRequiresTokenUnlessDevOpen(t *testing.T) {
+	market, err := city.New(config.CityConfig{}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	s := &server{registry: scheduler.NewRegistry(), market: market, modelCatalog: modelcatalog.New(config.ModelConfig{})}
+	req := httptest.NewRequest(http.MethodGet, "/admin/nodes", nil)
+	rec := httptest.NewRecorder()
+	s.requireAdmin(s.adminNodes)(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("admin without token status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	s.devAdminOpen = true
+	rec = httptest.NewRecorder()
+	s.requireAdmin(s.adminNodes)(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dev-open admin status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
 func TestNodeWebSocketRequiresClientCertificate(t *testing.T) {
 	market, err := city.New(config.CityConfig{}, nil)
 	if err != nil {

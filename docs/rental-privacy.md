@@ -20,7 +20,7 @@ Every request has a `privacy_tier`. If it is omitted, the coordinator treats it 
 | `community` | Shared city or coworking data where providers are known members | `private` or `community` nodes |
 | `public` | Non-sensitive prompts that can use rented capacity | Any node that accepts `public` |
 
-Each node announces what it accepts through `privacy_mode`:
+Each provider account has a coordinator-side privacy policy. Each node can also announce what it accepts through `privacy_mode`, but the coordinator intersects that node claim with the provider account policy.
 
 ```yaml
 privacy_mode: "private"
@@ -73,6 +73,18 @@ If no eligible node exists for the requested tier, the coordinator returns servi
 
 A provider who wants to rent capacity to unknown consumers should use:
 
+Coordinator provider account:
+
+```yaml
+providers:
+  - id: "neighbor-mac"
+    display_name: "Neighbor Mac Studio"
+    token: "pk-mi-..."
+    privacy_mode: "public"
+```
+
+Node config:
+
 ```yaml
 provider_id: "neighbor-mac"
 provider_token: "pk-mi-..."
@@ -84,6 +96,8 @@ coordinator_url: "wss://mi.example.local/ws/node"
 
 That node can earn usage credits for public prompts, but it will not receive private or community prompts.
 
+The coordinator enforces the provider account policy. A public provider cannot elevate itself by editing the node-agent config to claim `private`.
+
 ## Making it private for the user
 
 This implementation enforces scheduling privacy. It prevents sensitive requests from being sent to untrusted rented nodes.
@@ -94,6 +108,7 @@ For production, combine it with:
 - Node mTLS so only approved provider agents can connect.
 - Provider token rotation and revocation.
 - Consumer API keys and quotas.
+- Coordinator-side provider privacy policy.
 - A private default tier in clients and SDK wrappers.
 - Short retention logs with no prompt body storage.
 

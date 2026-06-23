@@ -20,9 +20,11 @@ city:
     - id: "ray-home"
       display_name: "Ray Home Macs"
       token: "pk-mi-ray-home-dev"
+      privacy_mode: "private"
     - id: "studio-node"
       display_name: "Studio Node"
       token: "pk-mi-studio-node-dev"
+      privacy_mode: "private"
 models:
   aliases:
     - id: "fast"

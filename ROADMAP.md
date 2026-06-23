@@ -10,11 +10,12 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Model aliases and model catalog.
 - City accounts for consumers and providers.
 - API keys, provider tokens, quotas, rotation, and revocation.
+- Quota reservations for concurrent requests.
 - Persistent local usage ledger.
 - HTTPS/WSS and node mTLS.
 - Scheduler failover before first token.
 - Cooldowns for unstable nodes.
-- Privacy tiers for private, community, and public rented compute.
+- Coordinator-enforced privacy tiers for private, community, and public rented compute.
 
 ## Next
 

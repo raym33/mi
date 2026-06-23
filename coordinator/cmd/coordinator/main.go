@@ -33,8 +33,11 @@ type server struct {
 	market                *city.Market
 	modelCatalog          *modelcatalog.Catalog
 	adminToken            string
+	devAdminOpen          bool
 	requireNodeClientCert bool
 }
+
+const defaultReservedOutputTokens = 1024
 
 func main() {
 	configPath := flag.String("config", "configs/coordinator.yaml", "path to coordinator config")
@@ -53,6 +56,7 @@ func main() {
 		market:                market,
 		modelCatalog:          modelcatalog.New(cfg.Models),
 		adminToken:            cfg.AdminToken,
+		devAdminOpen:          cfg.DevAdminOpen,
 		requireNodeClientCert: cfg.TLS.NodeClientCAFile != "",
 	}
 
@@ -110,8 +114,12 @@ func (s *server) requireConsumerQuota(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.adminToken == "" {
+		if s.adminToken == "" && s.devAdminOpen {
 			next(w, r)
+			return
+		}
+		if s.adminToken == "" {
+			http.Error(w, "admin token required", http.StatusUnauthorized)
 			return
 		}
 		if bearerToken(r) != s.adminToken {
@@ -254,17 +262,32 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	for _, msg := range req.Messages {
 		inferReq.Messages = append(inferReq.Messages, protocol.ProtocolMessage{Role: msg.Role, Content: msg.Content})
 	}
-
-	if req.Stream {
-		s.streamChat(w, r, requestID, req.Model, inferReq, consumerID(r.Context()))
+	reservation, err := s.market.ReserveConsumerQuota(consumerID(r.Context()), estimateTokenBudget(req))
+	if err != nil {
+		writeJSONStatus(w, http.StatusPaymentRequired, map[string]any{
+			"error": map[string]string{
+				"message": err.Error(),
+				"type":    "quota_exceeded",
+			},
+		})
 		return
 	}
-	s.blockingChat(w, r, requestID, req.Model, inferReq, consumerID(r.Context()))
+	if reservation != nil && inferReq.MaxTokens == nil {
+		defaultMaxTokens := defaultReservedOutputTokens
+		inferReq.MaxTokens = &defaultMaxTokens
+	}
+
+	if req.Stream {
+		s.streamChat(w, r, requestID, req.Model, inferReq, consumerID(r.Context()), reservation)
+		return
+	}
+	s.blockingChat(w, r, requestID, req.Model, inferReq, consumerID(r.Context()), reservation)
 }
 
-func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string) {
+func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string, reservation *city.QuotaReservation) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		s.market.ReleaseReservation(reservation)
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
@@ -278,11 +301,12 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, &sink)
 	setDispatchTrailers(w, result)
 	if err != nil {
+		s.market.ReleaseReservation(reservation)
 		s.writeStreamError(w, flusher, err)
 		return
 	}
 	done := result.Done
-	if err := s.market.Record(consumerID, result.ProviderID, done); err != nil {
+	if err := s.market.RecordReserved(reservation, consumerID, result.ProviderID, done); err != nil {
 		log.Printf("record usage: %v", err)
 	}
 	finish := done.FinishReason
@@ -298,13 +322,14 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	flusher.Flush()
 }
 
-func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string) {
+func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string, reservation *city.QuotaReservation) {
 	var content string
 	sink := collectSink{onChunk: func(chunk string) { content += chunk }}
 	w.Header().Set("X-Mi-Privacy-Tier", req.PrivacyTier)
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, sink)
 	setDispatchHeaders(w, result)
 	if err != nil {
+		s.market.ReleaseReservation(reservation)
 		status := http.StatusBadGateway
 		if errors.Is(err, scheduler.ErrNoNode) {
 			status = http.StatusServiceUnavailable
@@ -313,7 +338,7 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 		return
 	}
 	done := result.Done
-	if err := s.market.Record(consumerID, result.ProviderID, done); err != nil {
+	if err := s.market.RecordReserved(reservation, consumerID, result.ProviderID, done); err != nil {
 		log.Printf("record usage: %v", err)
 	}
 	writeJSON(w, openai.ChatCompletionResponse{
@@ -366,6 +391,13 @@ func (s *server) nodeWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	first.Register.ProviderID = providerID
+	privacyMode, privacyTiers, err := s.market.EnforceProviderPrivacy(providerID, first.Register.PrivacyMode, first.Register.PrivacyTiers)
+	if err != nil {
+		_ = conn.Close(websocket.StatusPolicyViolation, "provider privacy policy rejected")
+		return
+	}
+	first.Register.PrivacyMode = privacyMode
+	first.Register.PrivacyTiers = privacyTiers
 	nodeID := first.Register.NodeID
 	s.registry.Register(*first.Register, nc)
 	defer s.registry.Remove(nodeID)
@@ -552,6 +584,19 @@ func requestPrivacyTier(r *http.Request, req openai.ChatCompletionRequest) (stri
 	return privacy.NormalizeTier(req.PrivacyTier)
 }
 
+func estimateTokenBudget(req openai.ChatCompletionRequest) int64 {
+	chars := 0
+	for _, msg := range req.Messages {
+		chars += len(msg.Role) + len(msg.Content)
+	}
+	promptEstimate := int64((chars + 3) / 4)
+	outputEstimate := int64(defaultReservedOutputTokens)
+	if req.MaxTokens != nil && *req.MaxTokens > 0 {
+		outputEstimate = int64(*req.MaxTokens)
+	}
+	return promptEstimate + outputEstimate
+}
+
 func declareDispatchTrailers(w http.ResponseWriter) {
 	w.Header().Add("Trailer", "X-Mi-Dispatch-Attempts")
 	w.Header().Add("Trailer", "X-Mi-Node-Id")
@@ -582,6 +627,9 @@ func writeAccountError(w http.ResponseWriter, err error) {
 	case errors.Is(err, city.ErrAccountDisabled):
 		status = http.StatusConflict
 		errorType = "account_disabled"
+	case errors.Is(err, city.ErrInvalidPrivacy):
+		status = http.StatusBadRequest
+		errorType = "invalid_privacy"
 	}
 	writeJSONStatus(w, status, map[string]any{
 		"error": map[string]string{

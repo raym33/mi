@@ -74,3 +74,29 @@ func Accepts(tiers []string, requested string) bool {
 	}
 	return false
 }
+
+func ModeForTiers(tiers []string) string {
+	hasPrivate := false
+	hasCommunity := false
+	hasPublic := false
+	for _, tier := range tiers {
+		switch tier {
+		case Private:
+			hasPrivate = true
+		case Community:
+			hasCommunity = true
+		case Public:
+			hasPublic = true
+		}
+	}
+	switch {
+	case hasPrivate:
+		return Private
+	case hasCommunity:
+		return Community
+	case hasPublic:
+		return Public
+	default:
+		return ""
+	}
+}

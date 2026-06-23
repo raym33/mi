@@ -43,7 +43,8 @@ if [[ -n "$PROVIDER_ID" ]]; then
         -H 'Content-Type: application/json' \
         -d "{
           \"id\": \"$PROVIDER_ID\",
-          \"display_name\": \"${PROVIDER_NAME:-$PROVIDER_ID}\"
+          \"display_name\": \"${PROVIDER_NAME:-$PROVIDER_ID}\",
+          \"privacy_mode\": \"${PROVIDER_PRIVACY_MODE:-private}\"
         }"
       ;;
     rotate)
@@ -69,6 +70,7 @@ Set CONSUMER_ID or PROVIDER_ID.
 Examples:
   CONSUMER_ID=studio-b ./scripts/city-enroll.sh
   PROVIDER_ID=neighbor-mac ./scripts/city-enroll.sh
+  PROVIDER_PRIVACY_MODE=public PROVIDER_ID=neighbor-mac ./scripts/city-enroll.sh
   ACTION=rotate CONSUMER_ID=studio-b ./scripts/city-enroll.sh
   ACTION=disable PROVIDER_ID=neighbor-mac ./scripts/city-enroll.sh
 USAGE

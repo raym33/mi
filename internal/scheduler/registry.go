@@ -113,9 +113,15 @@ func (r *Registry) Register(msg protocol.Register, conn NodeConn) {
 	for _, model := range msg.Models {
 		models[model] = true
 	}
-	privacyTiers, err := privacy.NormalizeTiers(msg.PrivacyTiers)
+	var privacyTiers []string
+	var err error
+	if len(msg.PrivacyTiers) > 0 {
+		privacyTiers, err = privacy.NormalizeTiers(msg.PrivacyTiers)
+	} else {
+		privacyTiers, err = privacy.TiersForMode(msg.PrivacyMode)
+	}
 	if err != nil {
-		privacyTiers, _ = privacy.TiersForMode(msg.PrivacyMode)
+		privacyTiers, _ = privacy.TiersForMode(privacy.Private)
 	}
 	acceptedPrivacy := map[string]bool{}
 	for _, tier := range privacyTiers {

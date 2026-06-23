@@ -30,7 +30,9 @@ Once the first chunk is emitted, the request is pinned to that node. If the node
 
 Nodes that fail before the first token enter a short cooldown. Repeated failures extend the cooldown up to a cap, and a successful request clears the node's error streak. This keeps an unstable Mac from being chosen first over and over while still letting it recover automatically.
 
-Privacy tiers are enforced before scheduling. A public rented node can serve `public` requests, but it is never selected for `private` or `community` requests. If no eligible node exists, the coordinator returns no-node availability instead of silently lowering privacy.
+Privacy tiers are enforced before scheduling. A node announces what it accepts, but the coordinator intersects that claim with the provider account policy before registration. A provider account marked `public` can serve `public` requests, but it is never selected for `private` or `community` requests. If no eligible node exists, the coordinator returns no-node availability instead of silently lowering privacy.
+
+For quota-limited consumers, the coordinator reserves an estimated token budget before dispatch and releases or reconciles it when the request fails or completes. This prevents concurrent requests from spending the same remaining quota.
 
 Responses include dispatch metadata:
 

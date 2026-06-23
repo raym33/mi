@@ -214,11 +214,10 @@ func TestDispatchPrivateFailsWhenOnlyPublicNodeAvailable(t *testing.T) {
 	registry := NewRegistry()
 	conn := &scriptedConn{done: protocol.InferDone{FinishReason: "stop"}}
 	registry.Register(protocol.Register{
-		NodeID:       "public-node",
-		ProviderID:   "rented-provider",
-		Models:       []string{"m"},
-		PrivacyMode:  privacy.Public,
-		PrivacyTiers: []string{privacy.Public},
+		NodeID:      "public-node",
+		ProviderID:  "rented-provider",
+		Models:      []string{"m"},
+		PrivacyMode: privacy.Public,
 	}, conn)
 	registry.Heartbeat(protocol.Heartbeat{NodeID: "public-node", Models: []string{"m"}})
 

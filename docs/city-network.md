@@ -9,6 +9,7 @@ It introduces four primitives:
 - Provider tokens: shared secrets that let a node join under a provider account.
 - Usage accounting: requests and tokens are counted for both the consumer and the provider.
 - Consumer quotas: each API key can belong to an account with a token limit.
+- Quota reservations: estimated request budget is reserved before dispatch, then reconciled with actual usage when the request finishes.
 - Persistent local usage: usage survives coordinator restarts when `usage_store_path` is configured.
 - Privacy tiers: private prompts stay on trusted nodes, while public prompts can use rented provider capacity.
 
@@ -93,7 +94,8 @@ curl http://localhost:8080/admin/providers \
   -H 'Content-Type: application/json' \
   -d '{
     "id": "neighbor-mac",
-    "display_name": "Neighbor Mac Studio"
+    "display_name": "Neighbor Mac Studio",
+    "privacy_mode": "public"
   }'
 ```
 
@@ -102,6 +104,7 @@ The response includes `provider_token`. Put it in the node config:
 ```yaml
 provider_id: "neighbor-mac"
 provider_token: "pk-mi-..."
+privacy_mode: "public"
 ```
 
 There is also a helper script:
@@ -109,6 +112,7 @@ There is also a helper script:
 ```bash
 CONSUMER_ID=studio-b make city-enroll
 PROVIDER_ID=neighbor-mac make city-enroll
+PROVIDER_PRIVACY_MODE=public PROVIDER_ID=neighbor-mac make city-enroll
 ```
 
 Rotate a consumer API key:
@@ -161,6 +165,8 @@ curl http://localhost:8080/v1/chat/completions \
 ```
 
 If `privacy_tier` is omitted, the coordinator uses `private`. You can also send `X-Mi-Privacy-Tier: private`, `community`, or `public`.
+
+Provider privacy is enforced by the coordinator account policy. If a provider account is configured as `public`, its node cannot receive private work even if the local node-agent config claims `privacy_mode: "private"`.
 
 Model aliases are configured under `models.aliases`. For example, `fast` can point to `llama3.1:8b`, while a future `code` alias can point to a coding model. The OpenAI-compatible model list only shows aliases whose concrete target is currently available on at least one healthy node.
 
