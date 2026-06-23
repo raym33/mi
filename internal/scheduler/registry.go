@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
 )
 
@@ -37,6 +38,8 @@ type Node struct {
 	ProviderID    string
 	PublicName    string
 	City          string
+	PrivacyMode   string
+	PrivacyTiers  map[string]bool
 	Hostname      string
 	Models        map[string]bool
 	MaxConcurrent int
@@ -56,6 +59,8 @@ type NodeView struct {
 	ProviderID    string    `json:"provider_id,omitempty"`
 	PublicName    string    `json:"public_name,omitempty"`
 	City          string    `json:"city,omitempty"`
+	PrivacyMode   string    `json:"privacy_mode,omitempty"`
+	PrivacyTiers  []string  `json:"privacy_tiers,omitempty"`
 	Hostname      string    `json:"hostname"`
 	Models        []string  `json:"models"`
 	MaxConcurrent int       `json:"max_concurrent"`
@@ -81,6 +86,7 @@ type NetworkStatus struct {
 	TotalMemoryFreeMB uint64   `json:"total_memory_free_mb"`
 	Models            []string `json:"models"`
 	Cities            []string `json:"cities,omitempty"`
+	PrivacyTiers      []string `json:"privacy_tiers,omitempty"`
 }
 
 type DispatchResult struct {
@@ -107,11 +113,21 @@ func (r *Registry) Register(msg protocol.Register, conn NodeConn) {
 	for _, model := range msg.Models {
 		models[model] = true
 	}
+	privacyTiers, err := privacy.NormalizeTiers(msg.PrivacyTiers)
+	if err != nil {
+		privacyTiers, _ = privacy.TiersForMode(msg.PrivacyMode)
+	}
+	acceptedPrivacy := map[string]bool{}
+	for _, tier := range privacyTiers {
+		acceptedPrivacy[tier] = true
+	}
 	r.nodes[msg.NodeID] = &Node{
 		ID:            msg.NodeID,
 		ProviderID:    msg.ProviderID,
 		PublicName:    msg.PublicName,
 		City:          msg.City,
+		PrivacyMode:   msg.PrivacyMode,
+		PrivacyTiers:  acceptedPrivacy,
 		Hostname:      msg.Hostname,
 		Models:        models,
 		MaxConcurrent: max(1, msg.MaxConcurrent),
@@ -196,11 +212,18 @@ func (r *Registry) Snapshot() []NodeView {
 			models = append(models, model)
 		}
 		sort.Strings(models)
+		privacyTiers := make([]string, 0, len(node.PrivacyTiers))
+		for tier := range node.PrivacyTiers {
+			privacyTiers = append(privacyTiers, tier)
+		}
+		sort.Strings(privacyTiers)
 		out = append(out, NodeView{
 			ID:            node.ID,
 			ProviderID:    node.ProviderID,
 			PublicName:    node.PublicName,
 			City:          node.City,
+			PrivacyMode:   node.PrivacyMode,
+			PrivacyTiers:  privacyTiers,
 			Hostname:      node.Hostname,
 			Models:        models,
 			MaxConcurrent: node.MaxConcurrent,
@@ -226,6 +249,7 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 
 	models := map[string]bool{}
 	cities := map[string]bool{}
+	privacyTiers := map[string]bool{}
 	status := NetworkStatus{Nodes: len(r.nodes)}
 	now := time.Now()
 	for _, node := range r.nodes {
@@ -249,6 +273,9 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 		if node.City != "" {
 			cities[node.City] = true
 		}
+		for tier := range node.PrivacyTiers {
+			privacyTiers[tier] = true
+		}
 	}
 	for model := range models {
 		status.Models = append(status.Models, model)
@@ -256,8 +283,12 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 	for city := range cities {
 		status.Cities = append(status.Cities, city)
 	}
+	for tier := range privacyTiers {
+		status.PrivacyTiers = append(status.PrivacyTiers, tier)
+	}
 	sort.Strings(status.Models)
 	sort.Strings(status.Cities)
+	sort.Strings(status.PrivacyTiers)
 	return status
 }
 
@@ -266,7 +297,7 @@ func (r *Registry) Dispatch(ctx context.Context, requestID string, req protocol.
 	var lastErr error
 	attempts := 0
 	for {
-		node, err := r.reserve(req.Model, attempted)
+		node, err := r.reserve(req.Model, req.PrivacyTier, attempted)
 		if err != nil {
 			if lastErr != nil {
 				return DispatchResult{Attempts: attempts}, fmt.Errorf("%w after %d failed attempt(s): %v", ErrNoNode, attempts, lastErr)
@@ -290,7 +321,7 @@ func (r *Registry) Dispatch(ctx context.Context, requestID string, req protocol.
 	}
 }
 
-func (r *Registry) reserve(model string, exclude map[string]bool) (*Node, error) {
+func (r *Registry) reserve(model string, privacyTier string, exclude map[string]bool) (*Node, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -300,7 +331,7 @@ func (r *Registry) reserve(model string, exclude map[string]bool) (*Node, error)
 		if exclude[node.ID] {
 			continue
 		}
-		if node.healthy() && !node.inCooldown(now) && node.Models[model] && node.Active < node.MaxConcurrent {
+		if node.healthy() && !node.inCooldown(now) && node.Models[model] && node.acceptsPrivacy(privacyTier) && node.Active < node.MaxConcurrent {
 			candidates = append(candidates, node)
 		}
 	}
@@ -355,6 +386,17 @@ func (n *Node) healthy() bool {
 
 func (n *Node) inCooldown(now time.Time) bool {
 	return !n.CooldownUntil.IsZero() && now.Before(n.CooldownUntil)
+}
+
+func (n *Node) acceptsPrivacy(tier string) bool {
+	tier, err := privacy.NormalizeTier(tier)
+	if err != nil {
+		return false
+	}
+	if len(n.PrivacyTiers) == 0 {
+		return tier == privacy.Private
+	}
+	return n.PrivacyTiers[tier]
 }
 
 func cost(n *Node) float64 {

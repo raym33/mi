@@ -15,11 +15,12 @@
 ## Request flow
 
 1. A client calls `POST /v1/chat/completions` on the coordinator.
-2. The coordinator normalizes the OpenAI request into an internal inference request.
-3. The scheduler reserves a healthy node that advertises the requested model.
-4. The coordinator sends the request to that node over the node WebSocket.
-5. The node streams chunks from Ollama back to the coordinator.
-6. The coordinator emits OpenAI-style SSE chunks to the client.
+2. The coordinator resolves the request privacy tier, defaulting to `private`.
+3. The coordinator normalizes the OpenAI request into an internal inference request.
+4. The scheduler reserves a healthy node that advertises the requested model and accepts the requested privacy tier.
+5. The coordinator sends the request to that node over the node WebSocket.
+6. The node streams chunks from Ollama back to the coordinator.
+7. The coordinator emits OpenAI-style SSE chunks to the client.
 
 ## Failover
 
@@ -29,8 +30,11 @@ Once the first chunk is emitted, the request is pinned to that node. If the node
 
 Nodes that fail before the first token enter a short cooldown. Repeated failures extend the cooldown up to a cap, and a successful request clears the node's error streak. This keeps an unstable Mac from being chosen first over and over while still letting it recover automatically.
 
+Privacy tiers are enforced before scheduling. A public rented node can serve `public` requests, but it is never selected for `private` or `community` requests. If no eligible node exists, the coordinator returns no-node availability instead of silently lowering privacy.
+
 Responses include dispatch metadata:
 
+- `X-Mi-Privacy-Tier`
 - `X-Mi-Dispatch-Attempts`
 - `X-Mi-Node-Id`
 - `X-Mi-Provider-Id`

@@ -22,6 +22,7 @@ import (
 	"github.com/raym33/mi/internal/config"
 	"github.com/raym33/mi/internal/modelcatalog"
 	"github.com/raym33/mi/internal/openai"
+	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
 	"github.com/raym33/mi/internal/scheduler"
 	"github.com/raym33/mi/internal/wsutil"
@@ -232,10 +233,21 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestID := "chatcmpl-" + randomID()
+	privacyTier, err := requestPrivacyTier(r, req)
+	if err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{
+			"error": map[string]string{
+				"message": "privacy_tier must be one of private, community, public",
+				"type":    "invalid_privacy_tier",
+			},
+		})
+		return
+	}
 	modelResolution := s.modelCatalog.Resolve(req.Model)
 	inferReq := protocol.InferRequest{
 		Model:       modelResolution.Target,
 		Stream:      req.Stream,
+		PrivacyTier: privacyTier,
 		Temperature: req.Temperature,
 		MaxTokens:   req.MaxTokens,
 	}
@@ -259,6 +271,7 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Mi-Privacy-Tier", req.PrivacyTier)
 	declareDispatchTrailers(w)
 
 	sink := sseSink{w: w, flusher: flusher, requestID: requestID, model: responseModel}
@@ -288,6 +301,7 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string) {
 	var content string
 	sink := collectSink{onChunk: func(chunk string) { content += chunk }}
+	w.Header().Set("X-Mi-Privacy-Tier", req.PrivacyTier)
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, sink)
 	setDispatchHeaders(w, result)
 	if err != nil {
@@ -529,6 +543,13 @@ func setDispatchHeaders(w http.ResponseWriter, result scheduler.DispatchResult) 
 	if result.ProviderID != "" {
 		w.Header().Set("X-Mi-Provider-Id", result.ProviderID)
 	}
+}
+
+func requestPrivacyTier(r *http.Request, req openai.ChatCompletionRequest) (string, error) {
+	if tier := r.Header.Get("X-Mi-Privacy-Tier"); tier != "" {
+		return privacy.NormalizeTier(tier)
+	}
+	return privacy.NormalizeTier(req.PrivacyTier)
 }
 
 func declareDispatchTrailers(w http.ResponseWriter) {

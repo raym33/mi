@@ -122,6 +122,29 @@ func TestModelAliasesAppearWhenTargetAvailable(t *testing.T) {
 	}
 }
 
+func TestChatRejectsInvalidPrivacyTier(t *testing.T) {
+	market, err := city.New(config.CityConfig{}, []string{"sk-test"})
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	s := &server{registry: scheduler.NewRegistry(), market: market, modelCatalog: modelcatalog.New(config.ModelConfig{})}
+	handler := s.requireConsumerQuota(s.chatCompletions)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{
+		"model": "llama3.1:8b",
+		"privacy_tier": "secret",
+		"messages": [{"role": "user", "content": "hello"}]
+	}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
 type noopNodeConn struct{}
 
 func (noopNodeConn) SendInference(context.Context, string, protocol.InferRequest, scheduler.StreamSink) (protocol.InferDone, error) {

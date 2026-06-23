@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
 )
 
@@ -168,6 +169,64 @@ func TestSuccessClearsCooldownState(t *testing.T) {
 	node := registry.Snapshot()[0]
 	if node.ErrorStreak != 0 || node.InCooldown || node.LastError != "" {
 		t.Fatalf("node after success = %+v, want cleared cooldown state", node)
+	}
+}
+
+func TestDispatchRespectsPrivacyTier(t *testing.T) {
+	registry := NewRegistry()
+	publicConn := &scriptedConn{done: protocol.InferDone{FinishReason: "stop"}}
+	privateConn := &scriptedConn{done: protocol.InferDone{FinishReason: "stop"}}
+	registry.Register(protocol.Register{
+		NodeID:       "public-node",
+		ProviderID:   "rented-provider",
+		Models:       []string{"m"},
+		PrivacyMode:  privacy.Public,
+		PrivacyTiers: []string{privacy.Public},
+	}, publicConn)
+	registry.Register(protocol.Register{
+		NodeID:       "private-node",
+		ProviderID:   "trusted-provider",
+		Models:       []string{"m"},
+		PrivacyMode:  privacy.Private,
+		PrivacyTiers: []string{privacy.Private, privacy.Community, privacy.Public},
+	}, privateConn)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "public-node", Models: []string{"m"}, LoadAverage: 0})
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "private-node", Models: []string{"m"}, LoadAverage: 10})
+
+	privateResult, err := registry.Dispatch(context.Background(), "private-req", protocol.InferRequest{Model: "m", PrivacyTier: privacy.Private}, &collectTestSink{})
+	if err != nil {
+		t.Fatalf("private dispatch: %v", err)
+	}
+	if privateResult.NodeID != "private-node" || publicConn.calls != 0 {
+		t.Fatalf("private result = %+v public calls=%d, want trusted private node only", privateResult, publicConn.calls)
+	}
+
+	publicResult, err := registry.Dispatch(context.Background(), "public-req", protocol.InferRequest{Model: "m", PrivacyTier: privacy.Public}, &collectTestSink{})
+	if err != nil {
+		t.Fatalf("public dispatch: %v", err)
+	}
+	if publicResult.NodeID != "public-node" {
+		t.Fatalf("public result = %+v, want cheaper public node", publicResult)
+	}
+}
+
+func TestDispatchPrivateFailsWhenOnlyPublicNodeAvailable(t *testing.T) {
+	registry := NewRegistry()
+	conn := &scriptedConn{done: protocol.InferDone{FinishReason: "stop"}}
+	registry.Register(protocol.Register{
+		NodeID:       "public-node",
+		ProviderID:   "rented-provider",
+		Models:       []string{"m"},
+		PrivacyMode:  privacy.Public,
+		PrivacyTiers: []string{privacy.Public},
+	}, conn)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "public-node", Models: []string{"m"}})
+
+	if _, err := registry.Dispatch(context.Background(), "private-req", protocol.InferRequest{Model: "m", PrivacyTier: privacy.Private}, &collectTestSink{}); !errors.Is(err, ErrNoNode) {
+		t.Fatalf("private dispatch err = %v, want ErrNoNode", err)
+	}
+	if conn.calls != 0 {
+		t.Fatalf("public node calls = %d, want 0 for private request", conn.calls)
 	}
 }
 

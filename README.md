@@ -11,6 +11,7 @@ The first version is LAN-first and intentionally small:
 - The scheduler retries another node automatically if a provider fails before the first streamed token.
 - Unstable nodes enter short cooldowns and recover automatically after a successful request.
 - City mode lets multiple consumers and providers share compute with API keys, provider tokens, and usage accounting.
+- Privacy tiers keep sensitive requests on trusted nodes while public prompts can use rented provider capacity.
 
 ## Architecture
 
@@ -50,6 +51,7 @@ curl http://localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "fast",
+    "privacy_tier": "private",
     "messages": [{"role": "user", "content": "Say hello from the Mac fleet"}],
     "stream": true
   }'
@@ -64,6 +66,7 @@ This is an MVP scaffold. It already includes the core control-plane shape, but t
 ## City mode
 
 For a shared neighborhood/city deployment, see [`docs/city-network.md`](docs/city-network.md).
+For renting compute while keeping private workloads on trusted nodes, see [`docs/rental-privacy.md`](docs/rental-privacy.md).
 
 ```bash
 make run-city-coordinator

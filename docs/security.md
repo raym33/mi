@@ -12,6 +12,8 @@ For small communities, run the coordinator behind one of these:
 
 Provider tokens and API keys protect access, but they do not encrypt traffic by themselves. Use HTTPS/WSS when traffic leaves one trusted machine.
 
+Privacy tiers protect scheduling decisions. They do not make a prompt cryptographically invisible to the machine that performs inference. Use `privacy_mode: "public"` only for rented nodes that should receive non-sensitive work, and keep sensitive workloads on trusted private nodes.
+
 ## Built-in TLS
 
 Generate development certificates:
@@ -91,3 +93,4 @@ For city mode, the intended stack is:
 - Node mTLS proves the connecting process has a trusted node certificate.
 - Provider tokens bind that node to a provider account and can be rotated or revoked.
 - Consumer API keys authorize OpenAI-compatible API access and enforce quotas.
+- Privacy tiers prevent private requests from being dispatched to public rented providers.

@@ -3,6 +3,7 @@ provider_id: "ray-home"
 provider_token: "pk-mi-ray-home-dev"
 public_name: "Ray Mac mini"
 city: "Madrid"
+privacy_mode: "private"
 coordinator_url: "ws://localhost:8080/ws/node"
 ollama_url: "http://localhost:11434"
 models:

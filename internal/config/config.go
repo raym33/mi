@@ -68,6 +68,8 @@ type NodeAgent struct {
 	ProviderToken     string          `yaml:"provider_token"`
 	PublicName        string          `yaml:"public_name"`
 	City              string          `yaml:"city"`
+	PrivacyMode       string          `yaml:"privacy_mode"`
+	PrivacyTiers      []string        `yaml:"privacy_tiers"`
 	CoordinatorURL    string          `yaml:"coordinator_url"`
 	TLS               ClientTLSConfig `yaml:"tls"`
 	OllamaURL         string          `yaml:"ollama_url"`

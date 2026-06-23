@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/raym33/mi/internal/config"
 	"github.com/raym33/mi/internal/ollama"
+	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
 	"github.com/raym33/mi/internal/system"
 	"github.com/raym33/mi/internal/wsutil"
@@ -55,6 +56,10 @@ func (a *agent) run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	privacyTiers, err := nodePrivacyTiers(a.cfg)
+	if err != nil {
+		return err
+	}
 	conn, _, err := websocket.Dial(ctx, a.cfg.CoordinatorURL, dialOptions)
 	if err != nil {
 		return err
@@ -70,6 +75,8 @@ func (a *agent) run(ctx context.Context) error {
 			ProviderToken: a.cfg.ProviderToken,
 			PublicName:    a.cfg.PublicName,
 			City:          a.cfg.City,
+			PrivacyMode:   a.cfg.PrivacyMode,
+			PrivacyTiers:  privacyTiers,
 			Hostname:      hostname,
 			Arch:          runtime.GOARCH,
 			OS:            runtime.GOOS,
@@ -87,6 +94,13 @@ func (a *agent) run(ctx context.Context) error {
 	go func() { errCh <- a.heartbeatLoop(ctx, safe) }()
 	go func() { errCh <- a.readLoop(ctx, safe) }()
 	return <-errCh
+}
+
+func nodePrivacyTiers(cfg config.NodeAgent) ([]string, error) {
+	if len(cfg.PrivacyTiers) > 0 {
+		return privacy.NormalizeTiers(cfg.PrivacyTiers)
+	}
+	return privacy.TiersForMode(cfg.PrivacyMode)
 }
 
 func (a *agent) heartbeatLoop(ctx context.Context, conn *safeConn) error {

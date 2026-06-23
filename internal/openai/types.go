@@ -4,6 +4,7 @@ type ChatCompletionRequest struct {
 	Model       string        `json:"model"`
 	Messages    []ChatMessage `json:"messages"`
 	Stream      bool          `json:"stream,omitempty"`
+	PrivacyTier string        `json:"privacy_tier,omitempty"`
 	Temperature *float64      `json:"temperature,omitempty"`
 	MaxTokens   *int          `json:"max_tokens,omitempty"`
 }

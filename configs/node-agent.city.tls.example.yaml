@@ -3,6 +3,7 @@ provider_id: "ray-home"
 provider_token: "pk-mi-ray-home-dev"
 public_name: "Ray Mac mini"
 city: "Madrid"
+privacy_mode: "private"
 coordinator_url: "wss://localhost:8443/ws/node"
 tls:
   ca_file: "certs/ca.crt"

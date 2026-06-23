@@ -19,6 +19,8 @@ type Register struct {
 	ProviderToken string   `json:"provider_token,omitempty"`
 	PublicName    string   `json:"public_name,omitempty"`
 	City          string   `json:"city,omitempty"`
+	PrivacyMode   string   `json:"privacy_mode,omitempty"`
+	PrivacyTiers  []string `json:"privacy_tiers,omitempty"`
 	Hostname      string   `json:"hostname"`
 	Arch          string   `json:"arch"`
 	OS            string   `json:"os"`
@@ -40,6 +42,7 @@ type InferRequest struct {
 	Model       string            `json:"model"`
 	Messages    []ProtocolMessage `json:"messages"`
 	Stream      bool              `json:"stream"`
+	PrivacyTier string            `json:"privacy_tier,omitempty"`
 	Temperature *float64          `json:"temperature,omitempty"`
 	MaxTokens   *int              `json:"max_tokens,omitempty"`
 }

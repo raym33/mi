@@ -10,6 +10,7 @@ It introduces four primitives:
 - Usage accounting: requests and tokens are counted for both the consumer and the provider.
 - Consumer quotas: each API key can belong to an account with a token limit.
 - Persistent local usage: usage survives coordinator restarts when `usage_store_path` is configured.
+- Privacy tiers: private prompts stay on trusted nodes, while public prompts can use rented provider capacity.
 
 This is not a payment system yet. It is the base ledger needed before payouts and prepaid credits.
 
@@ -61,6 +62,9 @@ For another provider, copy `configs/node-agent.city.example.yaml` and change:
 - `provider_token`
 - `public_name`
 - `coordinator_url`
+- `privacy_mode`
+
+Use `privacy_mode: "public"` for a rented node that should only receive non-sensitive public prompts. Keep `privacy_mode: "private"` for trusted machines that may handle private prompts.
 
 ## Enroll accounts dynamically
 
@@ -150,10 +154,13 @@ curl http://localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "fast",
+    "privacy_tier": "public",
     "messages": [{"role": "user", "content": "Explain what this city AI network is in one sentence"}],
     "stream": true
   }'
 ```
+
+If `privacy_tier` is omitted, the coordinator uses `private`. You can also send `X-Mi-Privacy-Tier: private`, `community`, or `public`.
 
 Model aliases are configured under `models.aliases`. For example, `fast` can point to `llama3.1:8b`, while a future `code` alias can point to a coding model. The OpenAI-compatible model list only shows aliases whose concrete target is currently available on at least one healthy node.
 
@@ -204,6 +211,7 @@ make city-smoke
 - A local AI cooperative where people contribute idle Macs.
 - Shared inference for small businesses without sending prompts to a cloud API.
 - Internal credits or payouts later, based on measured provider token contribution.
+- Public rented capacity for non-sensitive work, with private work pinned to trusted nodes.
 - Public endpoint on a city VPN, Tailscale network, or reverse proxy.
 - Fair usage limits for schools, coworking spaces, and local AI clubs.
 - Automatic failover before the first token when a provider node fails to start a request.
@@ -218,5 +226,6 @@ make city-smoke
 - Add TLS/mTLS.
 - Add mTLS for node-only endpoints.
 - Add provider reputation and uptime scoring.
+- Add pricing rules and invoice exports for rented capacity.
 - Add request retry before first token.
-- Add prompt privacy controls and optional coordinator-to-provider encryption.
+- Add optional coordinator-to-provider encryption and stronger confidential-compute options.
