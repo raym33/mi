@@ -8,6 +8,7 @@ The first version is LAN-first and intentionally small:
 - Each Mac runs a `node-agent` that connects outbound to the coordinator over WebSocket.
 - Nodes serve requests through Ollama today, with the backend boundary ready for MLX later.
 - The scheduler routes by model availability, health, queue depth, memory pressure, and measured latency.
+- The scheduler retries another node automatically if a provider fails before the first streamed token.
 - City mode lets multiple consumers and providers share compute with API keys, provider tokens, and usage accounting.
 
 ## Architecture

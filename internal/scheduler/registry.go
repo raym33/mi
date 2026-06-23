@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -73,6 +74,12 @@ type DispatchResult struct {
 	Done       protocol.InferDone
 	NodeID     string
 	ProviderID string
+	Attempts   int
+}
+
+type RetryableError interface {
+	error
+	Retryable() bool
 }
 
 func NewRegistry() *Registry {
@@ -233,24 +240,41 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 }
 
 func (r *Registry) Dispatch(ctx context.Context, requestID string, req protocol.InferRequest, sink StreamSink) (DispatchResult, error) {
-	node, err := r.reserve(req.Model)
-	if err != nil {
-		return DispatchResult{}, err
+	attempted := map[string]bool{}
+	var lastErr error
+	attempts := 0
+	for {
+		node, err := r.reserve(req.Model, attempted)
+		if err != nil {
+			if lastErr != nil {
+				return DispatchResult{Attempts: attempts}, fmt.Errorf("%w after %d failed attempt(s): %v", ErrNoNode, attempts, lastErr)
+			}
+			return DispatchResult{Attempts: attempts}, err
+		}
+		attempts++
+		tracker := &firstChunkTracker{inner: sink}
+		done, err := node.Conn.SendInference(ctx, requestID, req, tracker)
+		r.release(node.ID)
+		if err == nil {
+			return DispatchResult{Done: done, NodeID: node.ID, ProviderID: node.ProviderID, Attempts: attempts}, nil
+		}
+		if tracker.sent || !canRetry(ctx, err) {
+			return DispatchResult{NodeID: node.ID, ProviderID: node.ProviderID, Attempts: attempts}, err
+		}
+		attempted[node.ID] = true
+		lastErr = err
 	}
-	defer r.release(node.ID)
-	done, err := node.Conn.SendInference(ctx, requestID, req, sink)
-	if err != nil {
-		return DispatchResult{}, err
-	}
-	return DispatchResult{Done: done, NodeID: node.ID, ProviderID: node.ProviderID}, nil
 }
 
-func (r *Registry) reserve(model string) (*Node, error) {
+func (r *Registry) reserve(model string, exclude map[string]bool) (*Node, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	var candidates []*Node
 	for _, node := range r.nodes {
+		if exclude[node.ID] {
+			continue
+		}
 		if node.healthy() && node.Models[model] && node.Active < node.MaxConcurrent {
 			candidates = append(candidates, node)
 		}
@@ -280,4 +304,28 @@ func (n *Node) healthy() bool {
 
 func cost(n *Node) float64 {
 	return float64(n.Active*10+n.QueueDepth*5) + n.LoadAverage
+}
+
+type firstChunkTracker struct {
+	inner StreamSink
+	sent  bool
+}
+
+func (s *firstChunkTracker) Chunk(content string) error {
+	s.sent = true
+	return s.inner.Chunk(content)
+}
+
+func canRetry(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx.Err() != nil {
+		return false
+	}
+	var retryable RetryableError
+	if errors.As(err, &retryable) {
+		return retryable.Retryable()
+	}
+	return true
 }

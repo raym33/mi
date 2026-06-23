@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -258,9 +259,11 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	declareDispatchTrailers(w)
 
 	sink := sseSink{w: w, flusher: flusher, requestID: requestID, model: responseModel}
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, &sink)
+	setDispatchTrailers(w, result)
 	if err != nil {
 		s.writeStreamError(w, flusher, err)
 		return
@@ -286,6 +289,7 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 	var content string
 	sink := collectSink{onChunk: func(chunk string) { content += chunk }}
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, sink)
+	setDispatchHeaders(w, result)
 	if err != nil {
 		status := http.StatusBadGateway
 		if errors.Is(err, scheduler.ErrNoNode) {
@@ -414,7 +418,7 @@ func (n *nodeConn) SendInference(ctx context.Context, requestID string, req prot
 				return *msg.Done, nil
 			case "error":
 				if msg.Error != nil {
-					return protocol.InferDone{}, errors.New(msg.Error.Message)
+					return protocol.InferDone{}, nodeInferenceError{message: msg.Error.Message, retryable: msg.Error.Retryable}
 				}
 				return protocol.InferDone{}, errors.New("node returned inference error")
 			}
@@ -486,6 +490,19 @@ func (s collectSink) Chunk(content string) error {
 	return nil
 }
 
+type nodeInferenceError struct {
+	message   string
+	retryable bool
+}
+
+func (e nodeInferenceError) Error() string {
+	return e.message
+}
+
+func (e nodeInferenceError) Retryable() bool {
+	return e.retryable
+}
+
 func writeJSON(w http.ResponseWriter, value any) {
 	writeJSONStatus(w, http.StatusOK, value)
 }
@@ -500,6 +517,28 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, value any) {
 	data, _ := json.Marshal(value)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	flusher.Flush()
+}
+
+func setDispatchHeaders(w http.ResponseWriter, result scheduler.DispatchResult) {
+	if result.Attempts > 0 {
+		w.Header().Set("X-Mi-Dispatch-Attempts", strconv.Itoa(result.Attempts))
+	}
+	if result.NodeID != "" {
+		w.Header().Set("X-Mi-Node-Id", result.NodeID)
+	}
+	if result.ProviderID != "" {
+		w.Header().Set("X-Mi-Provider-Id", result.ProviderID)
+	}
+}
+
+func declareDispatchTrailers(w http.ResponseWriter) {
+	w.Header().Add("Trailer", "X-Mi-Dispatch-Attempts")
+	w.Header().Add("Trailer", "X-Mi-Node-Id")
+	w.Header().Add("Trailer", "X-Mi-Provider-Id")
+}
+
+func setDispatchTrailers(w http.ResponseWriter, result scheduler.DispatchResult) {
+	setDispatchHeaders(w, result)
 }
 
 func writeCreateError(w http.ResponseWriter, err error) {

@@ -21,6 +21,20 @@
 5. The node streams chunks from Ollama back to the coordinator.
 6. The coordinator emits OpenAI-style SSE chunks to the client.
 
+## Failover
+
+The scheduler retries another eligible node only while no chunk has been sent to the client. This covers node disconnects, capacity races, and startup failures without duplicating generated text.
+
+Once the first chunk is emitted, the request is pinned to that node. If the node fails mid-generation, the error is surfaced instead of replaying the prompt on another node.
+
+Responses include dispatch metadata:
+
+- `X-Mi-Dispatch-Attempts`
+- `X-Mi-Node-Id`
+- `X-Mi-Provider-Id`
+
+For streaming responses, those values are sent as HTTP trailers.
+
 ## Next milestones
 
 - Persistent node identity and API-key scoped node enrollment.

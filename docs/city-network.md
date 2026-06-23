@@ -206,6 +206,7 @@ make city-smoke
 - Internal credits or payouts later, based on measured provider token contribution.
 - Public endpoint on a city VPN, Tailscale network, or reverse proxy.
 - Fair usage limits for schools, coworking spaces, and local AI clubs.
+- Automatic failover before the first token when a provider node fails to start a request.
 
 ## Next hardening steps
 
