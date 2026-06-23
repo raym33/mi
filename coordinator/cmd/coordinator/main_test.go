@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/raym33/mi/internal/challenge"
 	"github.com/raym33/mi/internal/city"
@@ -18,6 +19,7 @@ import (
 	"github.com/raym33/mi/internal/openai"
 	"github.com/raym33/mi/internal/protocol"
 	"github.com/raym33/mi/internal/scheduler"
+	"github.com/raym33/mi/internal/settlement"
 )
 
 func TestAdminEnrollmentRoutes(t *testing.T) {
@@ -226,6 +228,42 @@ func TestSyntheticChallengeRotatesProviders(t *testing.T) {
 	}
 	if first.ProviderID == second.ProviderID {
 		t.Fatalf("providers = %q then %q, want rotation", first.ProviderID, second.ProviderID)
+	}
+}
+
+func TestAdminIntegrityBuildsAnchorManifest(t *testing.T) {
+	settlements, err := settlement.New(config.SettlementConfig{Enabled: true, PricePerThousandTokensMicros: 1000, ProviderRewardShareBPS: 7000})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	challenges, err := challenge.New(config.ChallengeConfig{Enabled: true})
+	if err != nil {
+		t.Fatalf("new challenges: %v", err)
+	}
+	if _, err := settlements.Record(settlement.RecordInput{
+		RequestID:  "req-1",
+		ConsumerID: "consumer-a",
+		ProviderID: "provider-a",
+		Model:      "llama3.1:8b",
+		Done:       protocol.InferDone{PromptTokens: 3, OutputTokens: 5},
+		Latency:    120 * time.Millisecond,
+	}); err != nil {
+		t.Fatalf("record settlement: %v", err)
+	}
+	if _, err := challenges.Record(challenge.RecordInput{ProviderID: "provider-a", Challenge: "latency", Passed: true, Score: 90}); err != nil {
+		t.Fatalf("record challenge: %v", err)
+	}
+	s := &server{settlement: settlements, challenges: challenges}
+
+	report := doJSON[integrityReport](t, http.HandlerFunc(s.adminIntegrity), http.MethodGet, "/admin/integrity", ``)
+	if !report.Valid || !report.Settlement.Valid || !report.Challenges.Valid {
+		t.Fatalf("report = %+v, want valid chains", report)
+	}
+	if report.Anchor.SettlementEvents != 1 || report.Anchor.ChallengeEvents != 1 || report.Anchor.AnchorHash == "" {
+		t.Fatalf("anchor = %+v, want event counts and hash", report.Anchor)
+	}
+	if got := hashIntegrityAnchor(report.Anchor); got != report.Anchor.AnchorHash {
+		t.Fatalf("anchor hash = %q, recomputed = %q", report.Anchor.AnchorHash, got)
 	}
 }
 

@@ -16,6 +16,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Tamper-evident benchmark challenge events feeding provider reputation.
 - Optional synthetic benchmark runner for automatic provider evidence.
 - Per-provider challenge rotation so quiet nodes are tested regularly.
+- Combined settlement and challenge integrity manifest for external anchoring.
 - Persistent local usage ledger.
 - HTTPS/WSS and node mTLS.
 - Scheduler failover before first token.
@@ -27,7 +28,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Prometheus metrics for requests, tokens, nodes, errors, cooldowns, and provider usage.
 - Pricing rules per model, provider, and privacy tier.
 - Provider payout reports and invoice exports.
-- Optional on-chain anchoring of settlement hashes.
+- Optional on-chain anchoring transaction helper.
 - Benchmark-driven reputation, challenge jobs, and slashing/dispute flows.
 - Challenge pass/fail dispute review workflow.
 - One-command provider enrollment.

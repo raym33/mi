@@ -184,6 +184,17 @@ curl http://localhost:8080/admin/challenges/verify \
 
 Challenge summaries feed provider reputation. Providers with weak pass rates or low challenge scores receive lower reputation until their later performance improves. When `provider_id` is omitted, the synthetic runner rotates across eligible providers instead of always testing the cheapest current node. Synthetic challenge records store pass/fail, score, node, provider, latency, and hash links, not model output.
 
+## Integrity anchor
+
+Export a combined integrity manifest before invoicing, payout review, or external anchoring:
+
+```bash
+curl http://localhost:8080/admin/integrity \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
+The response includes settlement verification, challenge verification, event counts, latest hashes, and one `anchor_hash` over the compact manifest. Publish that `anchor_hash` to an external timestamping system, public chain, signed transparency log, or release artifact. Later, the operator can recompute the same manifest from local chain files and prove whether payout inputs changed.
+
 ## Payment roadmap
 
 The current settlement layer is payment-ready accounting, not a payment processor.
@@ -193,7 +204,7 @@ Recommended path:
 1. Internal credits: consumers buy token credits, providers accrue rewards.
 2. Invoice export: operator pays providers off-platform.
 3. Stablecoin payout: map provider balances to wallet addresses.
-4. On-chain anchoring: periodically publish `last_hash` to a public chain.
+4. On-chain anchoring: periodically publish `/admin/integrity` `anchor_hash` to a public chain.
 5. Slashing and disputes: add signed provider claims, uptime proofs, automated challenge windows, and provider bonds.
 6. Stronger verification: add TEEs, signed node attestations, redaction, or proof-of-inference as those techniques mature.
 

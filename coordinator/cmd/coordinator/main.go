@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -93,6 +94,7 @@ func main() {
 	mux.HandleFunc("GET /admin/settlement", s.requireAdmin(s.adminSettlement))
 	mux.HandleFunc("GET /admin/settlement/verify", s.requireAdmin(s.adminSettlementVerify))
 	mux.HandleFunc("GET /admin/reputation", s.requireAdmin(s.adminReputation))
+	mux.HandleFunc("GET /admin/integrity", s.requireAdmin(s.adminIntegrity))
 	mux.HandleFunc("GET /admin/challenges", s.requireAdmin(s.adminChallenges))
 	mux.HandleFunc("POST /admin/challenges", s.requireAdmin(s.adminRecordChallenge))
 	mux.HandleFunc("POST /admin/challenges/run", s.requireAdmin(s.adminRunChallenge))
@@ -205,6 +207,10 @@ func (s *server) adminReputation(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, reputation.Build(s.market.Snapshot(), s.registry.Snapshot(), s.settlement.Snapshot(0), s.challenges.Snapshot(0)))
 }
 
+func (s *server) adminIntegrity(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.integrityReport())
+}
+
 func (s *server) adminChallenges(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	writeJSON(w, s.challenges.Snapshot(limit))
@@ -234,6 +240,53 @@ func (s *server) adminRecordChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONStatus(w, http.StatusCreated, event)
+}
+
+type integrityReport struct {
+	GeneratedAt time.Time               `json:"generated_at"`
+	Valid       bool                    `json:"valid"`
+	Settlement  settlement.Verification `json:"settlement"`
+	Challenges  challenge.Verification  `json:"challenges"`
+	Anchor      integrityAnchor         `json:"anchor"`
+}
+
+type integrityAnchor struct {
+	Version          string    `json:"version"`
+	GeneratedAt      time.Time `json:"generated_at"`
+	SettlementEvents int       `json:"settlement_events"`
+	SettlementHash   string    `json:"settlement_hash"`
+	ChallengeEvents  int       `json:"challenge_events"`
+	ChallengeHash    string    `json:"challenge_hash"`
+	AnchorHash       string    `json:"anchor_hash"`
+}
+
+func (s *server) integrityReport() integrityReport {
+	generatedAt := time.Now().UTC()
+	settlementVerification := s.settlement.Verify()
+	challengeVerification := s.challenges.Verify()
+	anchor := integrityAnchor{
+		Version:          "mi-integrity-v1",
+		GeneratedAt:      generatedAt,
+		SettlementEvents: settlementVerification.Events,
+		SettlementHash:   settlementVerification.LastHash,
+		ChallengeEvents:  challengeVerification.Events,
+		ChallengeHash:    challengeVerification.LastHash,
+	}
+	anchor.AnchorHash = hashIntegrityAnchor(anchor)
+	return integrityReport{
+		GeneratedAt: generatedAt,
+		Valid:       settlementVerification.Valid && challengeVerification.Valid,
+		Settlement:  settlementVerification,
+		Challenges:  challengeVerification,
+		Anchor:      anchor,
+	}
+}
+
+func hashIntegrityAnchor(anchor integrityAnchor) string {
+	anchor.AnchorHash = ""
+	data, _ := json.Marshal(anchor)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *server) adminRunChallenge(w http.ResponseWriter, r *http.Request) {

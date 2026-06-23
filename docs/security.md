@@ -101,3 +101,5 @@ For city mode, the intended stack is:
 ## Settlement integrity
 
 The local settlement chain detects changes to recorded events. It does not prevent the operator from deleting the entire file or choosing not to record a request. For real payouts, back up the chain and periodically publish the latest hash to an external system such as a public blockchain, timestamping service, or signed transparency log.
+
+Use `GET /admin/integrity` to export a combined settlement and benchmark challenge manifest. Its `anchor_hash` is the recommended value to publish externally because it binds both usage/reward accounting and provider challenge evidence.
