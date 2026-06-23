@@ -206,6 +206,29 @@ func TestRunSyntheticChallengeRecordsProviderEvidence(t *testing.T) {
 	}
 }
 
+func TestSyntheticChallengeRotatesProviders(t *testing.T) {
+	challenges, err := challenge.New(config.ChallengeConfig{Enabled: true})
+	if err != nil {
+		t.Fatalf("new challenges: %v", err)
+	}
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"llama3.1:8b"}, PrivacyMode: "public"}, challengeNodeConn{content: "mi-ok"})
+	registry.Register(protocol.Register{NodeID: "node-b", ProviderID: "provider-b", Models: []string{"llama3.1:8b"}, PrivacyMode: "public"}, challengeNodeConn{content: "mi-ok"})
+	s := &server{registry: registry, challenges: challenges}
+
+	first, err := s.runSyntheticChallenge(context.Background(), config.ChallengeConfig{Model: "llama3.1:8b", ExpectedContains: "mi-ok"})
+	if err != nil {
+		t.Fatalf("first challenge: %v", err)
+	}
+	second, err := s.runSyntheticChallenge(context.Background(), config.ChallengeConfig{Model: "llama3.1:8b", ExpectedContains: "mi-ok"})
+	if err != nil {
+		t.Fatalf("second challenge: %v", err)
+	}
+	if first.ProviderID == second.ProviderID {
+		t.Fatalf("providers = %q then %q, want rotation", first.ProviderID, second.ProviderID)
+	}
+}
+
 type noopNodeConn struct{}
 
 func (noopNodeConn) SendInference(context.Context, string, protocol.InferRequest, scheduler.StreamSink) (protocol.InferDone, error) {

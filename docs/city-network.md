@@ -230,6 +230,8 @@ curl -X POST http://localhost:8080/admin/challenges/run \
   -d '{"model":"llama3.1:8b","expected_contains":"mi-ok"}'
 ```
 
+Add `"provider_id":"ray-home"` to target a specific provider. Without `provider_id`, the runner rotates across eligible providers.
+
 The example config writes usage to `data/city-usage.json`. Keep that file backed up if it represents real credits.
 The example settlement chain writes to `data/settlement-chain.jsonl`. Back it up and periodically anchor its latest hash externally if rewards represent real money.
 The example challenge chain writes to `data/challenge-chain.jsonl`.

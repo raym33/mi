@@ -299,11 +299,19 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 }
 
 func (r *Registry) Dispatch(ctx context.Context, requestID string, req protocol.InferRequest, sink StreamSink) (DispatchResult, error) {
+	return r.dispatch(ctx, requestID, req, sink, "")
+}
+
+func (r *Registry) DispatchToProvider(ctx context.Context, requestID string, providerID string, req protocol.InferRequest, sink StreamSink) (DispatchResult, error) {
+	return r.dispatch(ctx, requestID, req, sink, providerID)
+}
+
+func (r *Registry) dispatch(ctx context.Context, requestID string, req protocol.InferRequest, sink StreamSink, providerID string) (DispatchResult, error) {
 	attempted := map[string]bool{}
 	var lastErr error
 	attempts := 0
 	for {
-		node, err := r.reserve(req.Model, req.PrivacyTier, attempted)
+		node, err := r.reserveFiltered(req.Model, req.PrivacyTier, attempted, providerID)
 		if err != nil {
 			if lastErr != nil {
 				return DispatchResult{Attempts: attempts}, fmt.Errorf("%w after %d failed attempt(s): %v", ErrNoNode, attempts, lastErr)
@@ -328,6 +336,10 @@ func (r *Registry) Dispatch(ctx context.Context, requestID string, req protocol.
 }
 
 func (r *Registry) reserve(model string, privacyTier string, exclude map[string]bool) (*Node, error) {
+	return r.reserveFiltered(model, privacyTier, exclude, "")
+}
+
+func (r *Registry) reserveFiltered(model string, privacyTier string, exclude map[string]bool, providerID string) (*Node, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -335,6 +347,9 @@ func (r *Registry) reserve(model string, privacyTier string, exclude map[string]
 	now := time.Now()
 	for _, node := range r.nodes {
 		if exclude[node.ID] {
+			continue
+		}
+		if providerID != "" && node.ProviderID != providerID {
 			continue
 		}
 		if node.healthy() && !node.inCooldown(now) && node.Models[model] && node.acceptsPrivacy(privacyTier) && node.Active < node.MaxConcurrent {

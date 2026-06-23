@@ -60,16 +60,17 @@ type SettlementConfig struct {
 }
 
 type ChallengeConfig struct {
-	Enabled          bool     `yaml:"enabled"`
-	Path             string   `yaml:"path"`
-	AutoRun          bool     `yaml:"auto_run"`
-	Interval         Duration `yaml:"interval"`
-	Timeout          Duration `yaml:"timeout"`
-	Model            string   `yaml:"model"`
-	PrivacyTier      string   `yaml:"privacy_tier"`
-	Prompt           string   `yaml:"prompt"`
-	ExpectedContains string   `yaml:"expected_contains"`
-	MaxTokens        int      `yaml:"max_tokens"`
+	Enabled          bool     `json:"enabled,omitempty" yaml:"enabled"`
+	Path             string   `json:"path,omitempty" yaml:"path"`
+	AutoRun          bool     `json:"auto_run,omitempty" yaml:"auto_run"`
+	Interval         Duration `json:"interval,omitempty" yaml:"interval"`
+	Timeout          Duration `json:"timeout,omitempty" yaml:"timeout"`
+	Model            string   `json:"model,omitempty" yaml:"model"`
+	ProviderID       string   `json:"provider_id,omitempty" yaml:"provider_id"`
+	PrivacyTier      string   `json:"privacy_tier,omitempty" yaml:"privacy_tier"`
+	Prompt           string   `json:"prompt,omitempty" yaml:"prompt"`
+	ExpectedContains string   `json:"expected_contains,omitempty" yaml:"expected_contains"`
+	MaxTokens        int      `json:"max_tokens,omitempty" yaml:"max_tokens"`
 }
 
 type ModelConfig struct {

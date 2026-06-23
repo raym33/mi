@@ -74,6 +74,28 @@ func TestDispatchRetriesBeforeFirstChunk(t *testing.T) {
 	}
 }
 
+func TestDispatchToProviderTargetsOnlyThatProvider(t *testing.T) {
+	registry := NewRegistry()
+	first := &scriptedConn{done: protocol.InferDone{FinishReason: "stop"}}
+	second := &scriptedConn{chunk: "target", done: protocol.InferDone{FinishReason: "stop"}}
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"m"}}, first)
+	registry.Register(protocol.Register{NodeID: "node-b", ProviderID: "provider-b", Models: []string{"m"}}, second)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-a", Models: []string{"m"}, LoadAverage: 0})
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-b", Models: []string{"m"}, LoadAverage: 10})
+
+	sink := &collectTestSink{}
+	result, err := registry.DispatchToProvider(context.Background(), "req", "provider-b", protocol.InferRequest{Model: "m"}, sink)
+	if err != nil {
+		t.Fatalf("dispatch to provider: %v", err)
+	}
+	if result.NodeID != "node-b" || result.ProviderID != "provider-b" || first.calls != 0 || second.calls != 1 {
+		t.Fatalf("result = %+v first=%d second=%d, want provider-b only", result, first.calls, second.calls)
+	}
+	if sink.content != "target" {
+		t.Fatalf("sink content = %q, want target", sink.content)
+	}
+}
+
 func TestDispatchDoesNotRetryAfterFirstChunk(t *testing.T) {
 	registry := NewRegistry()
 	first := &scriptedConn{chunk: "partial", err: errors.New("decode failed")}

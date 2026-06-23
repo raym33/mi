@@ -27,6 +27,7 @@ challenges:
   interval: "10m"
   timeout: "30s"
   model: ""
+  provider_id: ""
   privacy_tier: "public"
   prompt: "Reply with a short health-check token."
   expected_contains: ""

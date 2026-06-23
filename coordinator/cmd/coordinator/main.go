@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,8 @@ type server struct {
 	modelCatalog          *modelcatalog.Catalog
 	settlement            *settlement.Ledger
 	challenges            *challenge.Ledger
+	challengeMu           sync.Mutex
+	nextChallengeProvider int
 	adminToken            string
 	devAdminOpen          bool
 	requireNodeClientCert bool
@@ -242,6 +245,9 @@ func (s *server) adminRunChallenge(w http.ResponseWriter, r *http.Request) {
 	if cfg.Model == "" && r.URL.Query().Get("model") != "" {
 		cfg.Model = r.URL.Query().Get("model")
 	}
+	if cfg.ProviderID == "" && r.URL.Query().Get("provider_id") != "" {
+		cfg.ProviderID = r.URL.Query().Get("provider_id")
+	}
 	event, err := s.runSyntheticChallenge(r.Context(), cfg)
 	if err != nil {
 		status := http.StatusInternalServerError
@@ -324,7 +330,7 @@ func (s *server) runSyntheticChallenge(ctx context.Context, cfg config.Challenge
 
 	var content string
 	startedAt := time.Now()
-	result, err := s.registry.Dispatch(ctx, "challenge-"+randomID(), protocol.InferRequest{
+	inferReq := protocol.InferRequest{
 		Model:       model,
 		PrivacyTier: privacyTier,
 		MaxTokens:   &maxTokens,
@@ -332,7 +338,19 @@ func (s *server) runSyntheticChallenge(ctx context.Context, cfg config.Challenge
 			{Role: "system", Content: "You are responding to a synthetic availability benchmark. Do not include private data."},
 			{Role: "user", Content: prompt},
 		},
-	}, collectSink{onChunk: func(chunk string) { content += chunk }})
+	}
+	sink := collectSink{onChunk: func(chunk string) { content += chunk }}
+	providerID := cfg.ProviderID
+	if providerID == "" {
+		providerID = s.nextSyntheticChallengeProvider(model, privacyTier)
+	}
+	var result scheduler.DispatchResult
+	var err error
+	if providerID != "" {
+		result, err = s.registry.DispatchToProvider(ctx, "challenge-"+randomID(), providerID, inferReq, sink)
+	} else {
+		result, err = s.registry.Dispatch(ctx, "challenge-"+randomID(), inferReq, sink)
+	}
 	latency := time.Since(startedAt)
 	if err != nil {
 		if result.ProviderID == "" {
@@ -370,6 +388,49 @@ func (s *server) runSyntheticChallenge(ctx context.Context, cfg config.Challenge
 		Score:      score,
 		Notes:      notes,
 	})
+}
+
+func (s *server) nextSyntheticChallengeProvider(model string, privacyTier string) string {
+	candidates := challengeProviderCandidates(s.registry.Snapshot(), model, privacyTier)
+	if len(candidates) == 0 {
+		return ""
+	}
+	s.challengeMu.Lock()
+	defer s.challengeMu.Unlock()
+	if s.nextChallengeProvider >= len(candidates) {
+		s.nextChallengeProvider = 0
+	}
+	providerID := candidates[s.nextChallengeProvider]
+	s.nextChallengeProvider = (s.nextChallengeProvider + 1) % len(candidates)
+	return providerID
+}
+
+func challengeProviderCandidates(nodes []scheduler.NodeView, model string, privacyTier string) []string {
+	seen := map[string]bool{}
+	for _, node := range nodes {
+		if node.ProviderID == "" || !node.Healthy || node.InCooldown || node.Active >= node.MaxConcurrent {
+			continue
+		}
+		if !containsString(node.Models, model) || !privacy.Accepts(node.PrivacyTiers, privacyTier) {
+			continue
+		}
+		seen[node.ProviderID] = true
+	}
+	out := make([]string, 0, len(seen))
+	for providerID := range seen {
+		out = append(out, providerID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 func challengeTimeout(cfg config.ChallengeConfig) time.Duration {
