@@ -72,4 +72,6 @@ Enroll city accounts dynamically:
 ```bash
 CONSUMER_ID=studio-b make city-enroll
 PROVIDER_ID=neighbor-mac make city-enroll
+ACTION=rotate CONSUMER_ID=studio-b make city-enroll
+ACTION=disable PROVIDER_ID=neighbor-mac make city-enroll
 ```

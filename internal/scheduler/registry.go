@@ -129,6 +129,23 @@ func (r *Registry) Remove(nodeID string) {
 	delete(r.nodes, nodeID)
 }
 
+func (r *Registry) RemoveProvider(providerID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	removed := 0
+	for nodeID, node := range r.nodes {
+		if node.ProviderID != providerID {
+			continue
+		}
+		if node.Conn != nil {
+			_ = node.Conn.Close()
+		}
+		delete(r.nodes, nodeID)
+		removed++
+	}
+	return removed
+}
+
 func (r *Registry) Models() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

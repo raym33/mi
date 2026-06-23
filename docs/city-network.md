@@ -92,6 +92,41 @@ CONSUMER_ID=studio-b make city-enroll
 PROVIDER_ID=neighbor-mac make city-enroll
 ```
 
+Rotate a consumer API key:
+
+```bash
+curl -X POST http://localhost:8080/admin/consumers/studio-b/rotate-key \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
+Rotate a provider token:
+
+```bash
+curl -X POST http://localhost:8080/admin/providers/neighbor-mac/rotate-token \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
+Disable a consumer:
+
+```bash
+curl -X DELETE http://localhost:8080/admin/consumers/studio-b \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
+Disable a provider and disconnect its active nodes:
+
+```bash
+curl -X DELETE http://localhost:8080/admin/providers/neighbor-mac \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
+The helper supports these operations too:
+
+```bash
+ACTION=rotate CONSUMER_ID=studio-b make city-enroll
+ACTION=disable PROVIDER_ID=neighbor-mac make city-enroll
+```
+
 ## Call as a consumer
 
 ```bash
@@ -145,7 +180,7 @@ make city-smoke
 ## Next hardening steps
 
 - Replace static provider tokens with enrollment links.
-- Add secret rotation and revocation.
+- Add temporary enrollment links and one-command node join.
 - Move from JSON persistence to SQLite/Postgres for larger networks.
 - Add quotas and prepaid credits.
 - Add TLS/mTLS.

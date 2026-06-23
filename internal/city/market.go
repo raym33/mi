@@ -23,6 +23,8 @@ var (
 	ErrQuotaExceeded        = errors.New("consumer token quota exceeded")
 	ErrInvalidAccount       = errors.New("invalid account id")
 	ErrAccountExists        = errors.New("account already exists")
+	ErrAccountNotFound      = errors.New("account not found")
+	ErrAccountDisabled      = errors.New("account disabled")
 )
 
 type Market struct {
@@ -55,12 +57,14 @@ type persistedConsumer struct {
 	ID              string   `json:"id"`
 	DisplayName     string   `json:"display_name"`
 	TotalTokenLimit int64    `json:"total_token_limit,omitempty"`
+	Disabled        bool     `json:"disabled,omitempty"`
 	APIKeyHashes    []string `json:"api_key_hashes,omitempty"`
 }
 
 type persistedProvider struct {
 	ID          string   `json:"id"`
 	DisplayName string   `json:"display_name"`
+	Disabled    bool     `json:"disabled,omitempty"`
 	TokenHashes []string `json:"token_hashes,omitempty"`
 }
 
@@ -68,11 +72,13 @@ type Consumer struct {
 	ID              string `json:"id"`
 	DisplayName     string `json:"display_name"`
 	TotalTokenLimit int64  `json:"total_token_limit,omitempty"`
+	Disabled        bool   `json:"disabled,omitempty"`
 }
 
 type Provider struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
+	Disabled    bool   `json:"disabled,omitempty"`
 }
 
 type Usage struct {
@@ -154,13 +160,15 @@ func New(cfg config.CityConfig, legacyAPIKeys []string) (*Market, error) {
 		if consumer.ID == "" {
 			continue
 		}
+		disabled := m.consumers[consumer.ID].Disabled
 		m.consumers[consumer.ID] = Consumer{
 			ID:              consumer.ID,
 			DisplayName:     consumer.DisplayName,
 			TotalTokenLimit: consumer.TotalTokenLimit,
+			Disabled:        disabled,
 		}
 		for _, key := range consumer.APIKeys {
-			if key != "" {
+			if key != "" && !disabled {
 				m.apiKeys[key] = consumer.ID
 				m.apiKeyHashes[hashSecret(key)] = consumer.ID
 			}
@@ -170,8 +178,9 @@ func New(cfg config.CityConfig, legacyAPIKeys []string) (*Market, error) {
 		if provider.ID == "" {
 			continue
 		}
-		m.providers[provider.ID] = Provider{ID: provider.ID, DisplayName: provider.DisplayName}
-		if provider.Token != "" {
+		disabled := m.providers[provider.ID].Disabled
+		m.providers[provider.ID] = Provider{ID: provider.ID, DisplayName: provider.DisplayName, Disabled: disabled}
+		if provider.Token != "" && !disabled {
 			m.tokens[provider.Token] = provider.ID
 			m.tokenHashes[hashSecret(provider.Token)] = provider.ID
 		}
@@ -235,6 +244,100 @@ func (m *Market) CreateProvider(input CreateProviderInput) (CreatedProvider, err
 	return CreatedProvider{Provider: provider, ProviderToken: token}, nil
 }
 
+func (m *Market) RotateConsumerKey(rawID string) (CreatedConsumer, error) {
+	id := normalizeAccountID(rawID)
+	if id == "" {
+		return CreatedConsumer{}, ErrInvalidAccount
+	}
+	apiKey, err := randomSecret("sk-mi-")
+	if err != nil {
+		return CreatedConsumer{}, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	consumer, ok := m.consumers[id]
+	if !ok {
+		return CreatedConsumer{}, ErrAccountNotFound
+	}
+	if consumer.Disabled {
+		return CreatedConsumer{}, ErrAccountDisabled
+	}
+	m.removeConsumerSecretsLocked(id)
+	m.apiKeyHashes[hashSecret(apiKey)] = id
+	if err := m.persistLocked(); err != nil {
+		return CreatedConsumer{}, err
+	}
+	return CreatedConsumer{Consumer: consumer, APIKey: apiKey}, nil
+}
+
+func (m *Market) RotateProviderToken(rawID string) (CreatedProvider, error) {
+	id := normalizeAccountID(rawID)
+	if id == "" {
+		return CreatedProvider{}, ErrInvalidAccount
+	}
+	token, err := randomSecret("pk-mi-")
+	if err != nil {
+		return CreatedProvider{}, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	provider, ok := m.providers[id]
+	if !ok {
+		return CreatedProvider{}, ErrAccountNotFound
+	}
+	if provider.Disabled {
+		return CreatedProvider{}, ErrAccountDisabled
+	}
+	m.removeProviderSecretsLocked(id)
+	m.tokenHashes[hashSecret(token)] = id
+	if err := m.persistLocked(); err != nil {
+		return CreatedProvider{}, err
+	}
+	return CreatedProvider{Provider: provider, ProviderToken: token}, nil
+}
+
+func (m *Market) DisableConsumer(rawID string) (Consumer, error) {
+	id := normalizeAccountID(rawID)
+	if id == "" {
+		return Consumer{}, ErrInvalidAccount
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	consumer, ok := m.consumers[id]
+	if !ok {
+		return Consumer{}, ErrAccountNotFound
+	}
+	consumer.Disabled = true
+	m.consumers[id] = consumer
+	m.removeConsumerSecretsLocked(id)
+	if err := m.persistLocked(); err != nil {
+		return Consumer{}, err
+	}
+	return consumer, nil
+}
+
+func (m *Market) DisableProvider(rawID string) (Provider, error) {
+	id := normalizeAccountID(rawID)
+	if id == "" {
+		return Provider{}, ErrInvalidAccount
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	provider, ok := m.providers[id]
+	if !ok {
+		return Provider{}, ErrAccountNotFound
+	}
+	provider.Disabled = true
+	m.providers[id] = provider
+	m.removeProviderSecretsLocked(id)
+	if err := m.persistLocked(); err != nil {
+		return Provider{}, err
+	}
+	return provider, nil
+}
+
 func (m *Market) AuthenticateConsumer(key string) (string, error) {
 	if key == "" && !m.enabled && len(m.apiKeys) == 0 && len(m.apiKeyHashes) == 0 {
 		return "local", nil
@@ -242,10 +345,10 @@ func (m *Market) AuthenticateConsumer(key string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if accountID, ok := m.apiKeys[key]; ok {
-		return accountID, nil
+		return m.activeConsumerIDLocked(accountID)
 	}
 	if accountID, ok := m.apiKeyHashes[hashSecret(key)]; ok {
-		return accountID, nil
+		return m.activeConsumerIDLocked(accountID)
 	}
 	return "", ErrUnauthorizedConsumer
 }
@@ -274,10 +377,10 @@ func (m *Market) AuthenticateProvider(reg protocol.Register) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if providerID, ok := m.tokens[reg.ProviderToken]; ok && providerID != "" {
-		return providerID, nil
+		return m.activeProviderIDLocked(providerID)
 	}
 	if providerID, ok := m.tokenHashes[hashSecret(reg.ProviderToken)]; ok && providerID != "" {
-		return providerID, nil
+		return m.activeProviderIDLocked(providerID)
 	}
 	return "", ErrUnauthorizedProvider
 }
@@ -364,13 +467,14 @@ func (m *Market) loadState(path string) error {
 			ID:              consumer.ID,
 			DisplayName:     consumer.DisplayName,
 			TotalTokenLimit: consumer.TotalTokenLimit,
+			Disabled:        consumer.Disabled,
 		}
 		for _, hash := range consumer.APIKeyHashes {
 			m.apiKeyHashes[hash] = consumer.ID
 		}
 	}
 	for _, provider := range snapshot.Providers {
-		m.providers[provider.ID] = Provider{ID: provider.ID, DisplayName: provider.DisplayName}
+		m.providers[provider.ID] = Provider{ID: provider.ID, DisplayName: provider.DisplayName, Disabled: provider.Disabled}
 		for _, hash := range provider.TokenHashes {
 			m.tokenHashes[hash] = provider.ID
 		}
@@ -419,6 +523,7 @@ func (m *Market) persistedConsumersLocked() []persistedConsumer {
 			ID:              consumer.ID,
 			DisplayName:     consumer.DisplayName,
 			TotalTokenLimit: consumer.TotalTokenLimit,
+			Disabled:        consumer.Disabled,
 			APIKeyHashes:    hashesForAccount(m.apiKeyHashes, consumer.ID),
 		})
 	}
@@ -431,6 +536,7 @@ func (m *Market) persistedProvidersLocked() []persistedProvider {
 		providers = append(providers, persistedProvider{
 			ID:          provider.ID,
 			DisplayName: provider.DisplayName,
+			Disabled:    provider.Disabled,
 			TokenHashes: hashesForAccount(m.tokenHashes, provider.ID),
 		})
 	}
@@ -473,6 +579,48 @@ func hashesForAccount(items map[string]string, accountID string) []string {
 	}
 	sort.Strings(hashes)
 	return hashes
+}
+
+func (m *Market) activeConsumerIDLocked(accountID string) (string, error) {
+	consumer, ok := m.consumers[accountID]
+	if !ok || consumer.Disabled {
+		return "", ErrUnauthorizedConsumer
+	}
+	return accountID, nil
+}
+
+func (m *Market) activeProviderIDLocked(accountID string) (string, error) {
+	provider, ok := m.providers[accountID]
+	if !ok || provider.Disabled {
+		return "", ErrUnauthorizedProvider
+	}
+	return accountID, nil
+}
+
+func (m *Market) removeConsumerSecretsLocked(accountID string) {
+	for secret, id := range m.apiKeys {
+		if id == accountID {
+			delete(m.apiKeys, secret)
+		}
+	}
+	for hash, id := range m.apiKeyHashes {
+		if id == accountID {
+			delete(m.apiKeyHashes, hash)
+		}
+	}
+}
+
+func (m *Market) removeProviderSecretsLocked(accountID string) {
+	for secret, id := range m.tokens {
+		if id == accountID {
+			delete(m.tokens, secret)
+		}
+	}
+	for hash, id := range m.tokenHashes {
+		if id == accountID {
+			delete(m.tokenHashes, hash)
+		}
+	}
 }
 
 func hashSecret(secret string) string {

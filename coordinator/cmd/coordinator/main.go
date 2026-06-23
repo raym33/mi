@@ -52,7 +52,11 @@ func main() {
 	mux.HandleFunc("GET /admin/nodes", s.requireAdmin(s.adminNodes))
 	mux.HandleFunc("GET /admin/city", s.requireAdmin(s.adminCity))
 	mux.HandleFunc("POST /admin/consumers", s.requireAdmin(s.adminCreateConsumer))
+	mux.HandleFunc("POST /admin/consumers/{id}/rotate-key", s.requireAdmin(s.adminRotateConsumerKey))
+	mux.HandleFunc("DELETE /admin/consumers/{id}", s.requireAdmin(s.adminDisableConsumer))
 	mux.HandleFunc("POST /admin/providers", s.requireAdmin(s.adminCreateProvider))
+	mux.HandleFunc("POST /admin/providers/{id}/rotate-token", s.requireAdmin(s.adminRotateProviderToken))
+	mux.HandleFunc("DELETE /admin/providers/{id}", s.requireAdmin(s.adminDisableProvider))
 
 	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
 	log.Fatal(http.ListenAndServe(cfg.ListenAddr, mux))
@@ -159,6 +163,43 @@ func (s *server) adminCreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONStatus(w, http.StatusCreated, created)
+}
+
+func (s *server) adminRotateConsumerKey(w http.ResponseWriter, r *http.Request) {
+	rotated, err := s.market.RotateConsumerKey(r.PathValue("id"))
+	if err != nil {
+		writeAccountError(w, err)
+		return
+	}
+	writeJSON(w, rotated)
+}
+
+func (s *server) adminRotateProviderToken(w http.ResponseWriter, r *http.Request) {
+	rotated, err := s.market.RotateProviderToken(r.PathValue("id"))
+	if err != nil {
+		writeAccountError(w, err)
+		return
+	}
+	writeJSON(w, rotated)
+}
+
+func (s *server) adminDisableConsumer(w http.ResponseWriter, r *http.Request) {
+	consumer, err := s.market.DisableConsumer(r.PathValue("id"))
+	if err != nil {
+		writeAccountError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"consumer": consumer})
+}
+
+func (s *server) adminDisableProvider(w http.ResponseWriter, r *http.Request) {
+	provider, err := s.market.DisableProvider(r.PathValue("id"))
+	if err != nil {
+		writeAccountError(w, err)
+		return
+	}
+	disconnected := s.registry.RemoveProvider(provider.ID)
+	writeJSON(w, map[string]any{"provider": provider, "disconnected_nodes": disconnected})
 }
 
 func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -440,6 +481,10 @@ func writeSSE(w http.ResponseWriter, flusher http.Flusher, value any) {
 }
 
 func writeCreateError(w http.ResponseWriter, err error) {
+	writeAccountError(w, err)
+}
+
+func writeAccountError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	errorType := "internal_error"
 	switch {
@@ -449,6 +494,12 @@ func writeCreateError(w http.ResponseWriter, err error) {
 	case errors.Is(err, city.ErrAccountExists):
 		status = http.StatusConflict
 		errorType = "account_exists"
+	case errors.Is(err, city.ErrAccountNotFound):
+		status = http.StatusNotFound
+		errorType = "account_not_found"
+	case errors.Is(err, city.ErrAccountDisabled):
+		status = http.StatusConflict
+		errorType = "account_disabled"
 	}
 	writeJSONStatus(w, status, map[string]any{
 		"error": map[string]string{

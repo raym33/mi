@@ -158,6 +158,86 @@ func TestDynamicEnrollmentPersistsHashedSecrets(t *testing.T) {
 	}
 }
 
+func TestRotationAndDisablePersist(t *testing.T) {
+	usagePath := filepath.Join(t.TempDir(), "city-state.json")
+	cfg := config.CityConfig{
+		Enabled:               true,
+		RequireProviderTokens: true,
+		UsageStorePath:        usagePath,
+	}
+
+	market, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	consumer, err := market.CreateConsumer(CreateConsumerInput{ID: "studio"})
+	if err != nil {
+		t.Fatalf("create consumer: %v", err)
+	}
+	provider, err := market.CreateProvider(CreateProviderInput{ID: "provider-a"})
+	if err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+
+	rotatedConsumer, err := market.RotateConsumerKey("studio")
+	if err != nil {
+		t.Fatalf("rotate consumer: %v", err)
+	}
+	if _, err := market.AuthenticateConsumer(consumer.APIKey); !errors.Is(err, ErrUnauthorizedConsumer) {
+		t.Fatalf("old consumer key auth = %v, want ErrUnauthorizedConsumer", err)
+	}
+	if consumerID, err := market.AuthenticateConsumer(rotatedConsumer.APIKey); err != nil || consumerID != "studio" {
+		t.Fatalf("new consumer key auth = %q, %v", consumerID, err)
+	}
+
+	rotatedProvider, err := market.RotateProviderToken("provider-a")
+	if err != nil {
+		t.Fatalf("rotate provider: %v", err)
+	}
+	if _, err := market.AuthenticateProvider(protocol.Register{ProviderToken: provider.ProviderToken}); !errors.Is(err, ErrUnauthorizedProvider) {
+		t.Fatalf("old provider token auth = %v, want ErrUnauthorizedProvider", err)
+	}
+	if providerID, err := market.AuthenticateProvider(protocol.Register{ProviderToken: rotatedProvider.ProviderToken}); err != nil || providerID != "provider-a" {
+		t.Fatalf("new provider token auth = %q, %v", providerID, err)
+	}
+
+	disabledConsumer, err := market.DisableConsumer("studio")
+	if err != nil {
+		t.Fatalf("disable consumer: %v", err)
+	}
+	if !disabledConsumer.Disabled {
+		t.Fatal("consumer should be disabled")
+	}
+	if _, err := market.AuthenticateConsumer(rotatedConsumer.APIKey); !errors.Is(err, ErrUnauthorizedConsumer) {
+		t.Fatalf("disabled consumer auth = %v, want ErrUnauthorizedConsumer", err)
+	}
+	if _, err := market.RotateConsumerKey("studio"); !errors.Is(err, ErrAccountDisabled) {
+		t.Fatalf("rotate disabled consumer = %v, want ErrAccountDisabled", err)
+	}
+
+	disabledProvider, err := market.DisableProvider("provider-a")
+	if err != nil {
+		t.Fatalf("disable provider: %v", err)
+	}
+	if !disabledProvider.Disabled {
+		t.Fatal("provider should be disabled")
+	}
+	if _, err := market.AuthenticateProvider(protocol.Register{ProviderToken: rotatedProvider.ProviderToken}); !errors.Is(err, ErrUnauthorizedProvider) {
+		t.Fatalf("disabled provider auth = %v, want ErrUnauthorizedProvider", err)
+	}
+
+	restarted, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("restart market: %v", err)
+	}
+	if _, err := restarted.AuthenticateConsumer(rotatedConsumer.APIKey); !errors.Is(err, ErrUnauthorizedConsumer) {
+		t.Fatalf("restarted disabled consumer auth = %v, want ErrUnauthorizedConsumer", err)
+	}
+	if _, err := restarted.AuthenticateProvider(protocol.Register{ProviderToken: rotatedProvider.ProviderToken}); !errors.Is(err, ErrUnauthorizedProvider) {
+		t.Fatalf("restarted disabled provider auth = %v, want ErrUnauthorizedProvider", err)
+	}
+}
+
 func TestProviderTokenRequired(t *testing.T) {
 	market, err := New(config.CityConfig{
 		Enabled:               true,
