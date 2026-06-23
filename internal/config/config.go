@@ -19,6 +19,7 @@ type CityConfig struct {
 	Enabled               bool              `yaml:"enabled"`
 	Name                  string            `yaml:"name"`
 	RequireProviderTokens bool              `yaml:"require_provider_tokens"`
+	UsageStorePath        string            `yaml:"usage_store_path"`
 	Consumers             []ConsumerAccount `yaml:"consumers"`
 	Providers             []ProviderAccount `yaml:"providers"`
 }

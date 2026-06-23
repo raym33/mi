@@ -60,3 +60,9 @@ This is an MVP scaffold. It already includes the core control-plane shape, but t
 ## City mode
 
 For a shared neighborhood/city deployment, see [`docs/city-network.md`](docs/city-network.md).
+
+```bash
+make run-city-coordinator
+make run-city-node
+make city-smoke
+```

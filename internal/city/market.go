@@ -1,7 +1,11 @@
 package city
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -19,6 +23,7 @@ type Market struct {
 	enabled               bool
 	name                  string
 	requireProviderTokens bool
+	usageStorePath        string
 
 	mu          sync.Mutex
 	consumers   map[string]Consumer
@@ -27,6 +32,13 @@ type Market struct {
 	tokens      map[string]string
 	consumerUse map[string]*Usage
 	providerUse map[string]*Usage
+}
+
+type persistedUsage struct {
+	Version       int       `json:"version"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	ConsumerUsage []Usage   `json:"consumer_usage"`
+	ProviderUsage []Usage   `json:"provider_usage"`
 }
 
 type Consumer struct {
@@ -65,11 +77,12 @@ type ConsumerStatus struct {
 	QuotaExceeded   bool     `json:"quota_exceeded"`
 }
 
-func New(cfg config.CityConfig, legacyAPIKeys []string) *Market {
+func New(cfg config.CityConfig, legacyAPIKeys []string) (*Market, error) {
 	m := &Market{
 		enabled:               cfg.Enabled,
 		name:                  cfg.Name,
 		requireProviderTokens: cfg.RequireProviderTokens,
+		usageStorePath:        cfg.UsageStorePath,
 		consumers:             map[string]Consumer{},
 		providers:             map[string]Provider{},
 		apiKeys:               map[string]string{},
@@ -105,7 +118,12 @@ func New(cfg config.CityConfig, legacyAPIKeys []string) *Market {
 			m.tokens[provider.Token] = provider.ID
 		}
 	}
-	return m
+	if cfg.UsageStorePath != "" {
+		if err := m.loadUsage(cfg.UsageStorePath); err != nil {
+			return nil, err
+		}
+	}
+	return m, nil
 }
 
 func (m *Market) Enabled() bool {
@@ -155,13 +173,14 @@ func (m *Market) AuthenticateProvider(reg protocol.Register) (string, error) {
 	return providerID, nil
 }
 
-func (m *Market) Record(consumerID, providerID string, done protocol.InferDone) {
+func (m *Market) Record(consumerID, providerID string, done protocol.InferDone) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.addUsage(m.consumerUse, consumerID, done)
 	if providerID != "" {
 		m.addUsage(m.providerUse, providerID, done)
 	}
+	return m.persistLocked()
 }
 
 func (m *Market) ConsumerStatus(accountID string) ConsumerStatus {
@@ -204,21 +223,91 @@ func (m *Market) addUsage(bucket map[string]*Usage, accountID string, done proto
 	usage.UpdatedAt = time.Now()
 }
 
+func (m *Market) loadUsage(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var snapshot persistedUsage
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, usage := range snapshot.ConsumerUsage {
+		copyUsage := usage
+		m.consumerUse[usage.AccountID] = &copyUsage
+	}
+	for _, usage := range snapshot.ProviderUsage {
+		copyUsage := usage
+		m.providerUse[usage.AccountID] = &copyUsage
+	}
+	return nil
+}
+
+func (m *Market) persistLocked() error {
+	if m.usageStorePath == "" {
+		return nil
+	}
+	snapshot := persistedUsage{
+		Version:       1,
+		UpdatedAt:     time.Now(),
+		ConsumerUsage: usageMapValues(m.consumerUse),
+		ProviderUsage: usageMapValues(m.providerUse),
+	}
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(m.usageStorePath), 0o755); err != nil {
+		return err
+	}
+	tmp := m.usageStorePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, m.usageStorePath)
+}
+
+func usageMapValues(items map[string]*Usage) []Usage {
+	values := make([]Usage, 0, len(items))
+	for _, item := range items {
+		values = append(values, *item)
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i].AccountID < values[j].AccountID })
+	return values
+}
+
 func (m *Market) Snapshot() Snapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := Snapshot{Enabled: m.enabled, Name: m.name}
-	for _, consumer := range m.consumers {
-		s.Consumers = append(s.Consumers, consumer)
+	return Snapshot{
+		Enabled:       m.enabled,
+		Name:          m.name,
+		Consumers:     consumerMapValues(m.consumers),
+		Providers:     providerMapValues(m.providers),
+		ConsumerUsage: usageMapValues(m.consumerUse),
+		ProviderUsage: usageMapValues(m.providerUse),
 	}
-	for _, provider := range m.providers {
-		s.Providers = append(s.Providers, provider)
+}
+
+func consumerMapValues(items map[string]Consumer) []Consumer {
+	values := make([]Consumer, 0, len(items))
+	for _, consumer := range items {
+		values = append(values, consumer)
 	}
-	for _, usage := range m.consumerUse {
-		s.ConsumerUsage = append(s.ConsumerUsage, *usage)
+	sort.Slice(values, func(i, j int) bool { return values[i].ID < values[j].ID })
+	return values
+}
+
+func providerMapValues(items map[string]Provider) []Provider {
+	values := make([]Provider, 0, len(items))
+	for _, provider := range items {
+		values = append(values, provider)
 	}
-	for _, usage := range m.providerUse {
-		s.ProviderUsage = append(s.ProviderUsage, *usage)
-	}
-	return s
+	sort.Slice(values, func(i, j int) bool { return values[i].ID < values[j].ID })
+	return values
 }

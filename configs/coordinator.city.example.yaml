@@ -4,6 +4,7 @@ city:
   enabled: true
   name: "Madrid Local AI"
   require_provider_tokens: true
+  usage_store_path: "data/city-usage.json"
   consumers:
     - id: "studio-a"
       display_name: "Studio A"

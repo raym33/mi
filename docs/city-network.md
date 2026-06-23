@@ -9,13 +9,20 @@ It introduces four primitives:
 - Provider tokens: shared secrets that let a node join under a provider account.
 - Usage accounting: requests and tokens are counted for both the consumer and the provider.
 - Consumer quotas: each API key can belong to an account with a token limit.
+- Persistent local usage: usage survives coordinator restarts when `usage_store_path` is configured.
 
-This is not a payment system yet. It is the base ledger needed before payouts, credits, or quotas.
+This is not a payment system yet. It is the base ledger needed before payouts and prepaid credits.
 
 ## Start a city coordinator
 
 ```bash
 go run ./coordinator/cmd/coordinator -config configs/coordinator.city.example.yaml
+```
+
+Or:
+
+```bash
+make run-city-coordinator
 ```
 
 ## Join as a provider
@@ -25,6 +32,12 @@ On a Mac with Ollama running:
 ```bash
 ollama pull llama3.1:8b
 go run ./node-agent/cmd/node-agent -config configs/node-agent.city.example.yaml
+```
+
+Or:
+
+```bash
+make run-city-node
 ```
 
 For another provider, copy `configs/node-agent.city.example.yaml` and change:
@@ -54,6 +67,8 @@ curl http://localhost:8080/admin/city \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
+The example config writes usage to `data/city-usage.json`. Keep that file backed up if it represents real credits.
+
 Consumers can inspect their own account and remaining quota:
 
 ```bash
@@ -67,6 +82,12 @@ Anyone can inspect public network capacity:
 curl http://localhost:8080/network/status
 ```
 
+Run the full city smoke test:
+
+```bash
+make city-smoke
+```
+
 ## What this unlocks
 
 - A local AI cooperative where people contribute idle Macs.
@@ -78,7 +99,7 @@ curl http://localhost:8080/network/status
 ## Next hardening steps
 
 - Replace static provider tokens with enrollment links.
-- Store accounts and usage in SQLite/Postgres.
+- Move from JSON persistence to SQLite/Postgres for larger networks.
 - Add quotas and prepaid credits.
 - Add TLS/mTLS.
 - Add provider reputation and uptime scoring.

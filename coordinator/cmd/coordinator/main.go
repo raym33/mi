@@ -36,7 +36,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s := &server{registry: scheduler.NewRegistry(), market: city.New(cfg.City, cfg.APIKeys), adminToken: cfg.AdminToken}
+	market, err := city.New(cfg.City, cfg.APIKeys)
+	if err != nil {
+		log.Fatal(err)
+	}
+	s := &server{registry: scheduler.NewRegistry(), market: market, adminToken: cfg.AdminToken}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
@@ -173,7 +177,9 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 		return
 	}
 	done := result.Done
-	s.market.Record(consumerID, result.ProviderID, done)
+	if err := s.market.Record(consumerID, result.ProviderID, done); err != nil {
+		log.Printf("record usage: %v", err)
+	}
 	finish := done.FinishReason
 	chunk := openai.ChatCompletionChunk{
 		ID:      requestID,
@@ -200,7 +206,9 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 		return
 	}
 	done := result.Done
-	s.market.Record(consumerID, result.ProviderID, done)
+	if err := s.market.Record(consumerID, result.ProviderID, done); err != nil {
+		log.Printf("record usage: %v", err)
+	}
 	writeJSON(w, openai.ChatCompletionResponse{
 		ID:      requestID,
 		Object:  "chat.completion",

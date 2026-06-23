@@ -2,6 +2,7 @@ package city
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/raym33/mi/internal/config"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestConsumerQuotaAndUsage(t *testing.T) {
-	market := New(config.CityConfig{
+	market, err := New(config.CityConfig{
 		Enabled: true,
 		Consumers: []config.ConsumerAccount{{
 			ID:              "studio",
@@ -18,6 +19,9 @@ func TestConsumerQuotaAndUsage(t *testing.T) {
 			TotalTokenLimit: 10,
 		}},
 	}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
 
 	consumerID, err := market.AuthenticateConsumer("sk-test")
 	if err != nil {
@@ -30,7 +34,9 @@ func TestConsumerQuotaAndUsage(t *testing.T) {
 		t.Fatalf("quota before usage: %v", err)
 	}
 
-	market.Record(consumerID, "provider-a", protocol.InferDone{PromptTokens: 4, OutputTokens: 6})
+	if err := market.Record(consumerID, "provider-a", protocol.InferDone{PromptTokens: 4, OutputTokens: 6}); err != nil {
+		t.Fatalf("record usage: %v", err)
+	}
 	if err := market.CheckConsumerQuota(consumerID); !errors.Is(err, ErrQuotaExceeded) {
 		t.Fatalf("quota after usage = %v, want ErrQuotaExceeded", err)
 	}
@@ -44,8 +50,45 @@ func TestConsumerQuotaAndUsage(t *testing.T) {
 	}
 }
 
+func TestUsagePersistsAcrossMarketRestart(t *testing.T) {
+	usagePath := filepath.Join(t.TempDir(), "city-usage.json")
+	cfg := config.CityConfig{
+		Enabled:        true,
+		UsageStorePath: usagePath,
+		Consumers: []config.ConsumerAccount{{
+			ID:      "studio",
+			APIKeys: []string{"sk-test"},
+		}},
+		Providers: []config.ProviderAccount{{
+			ID:    "provider-a",
+			Token: "pk-test",
+		}},
+	}
+
+	market, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	if err := market.Record("studio", "provider-a", protocol.InferDone{PromptTokens: 7, OutputTokens: 11}); err != nil {
+		t.Fatalf("record usage: %v", err)
+	}
+
+	restarted, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("restart market: %v", err)
+	}
+	status := restarted.ConsumerStatus("studio")
+	if status.Usage.PromptTokens != 7 || status.Usage.CompletionTokens != 11 || status.Usage.TotalTokens != 18 {
+		t.Fatalf("usage after restart = %+v, want prompt=7 completion=11 total=18", status.Usage)
+	}
+	snapshot := restarted.Snapshot()
+	if len(snapshot.ProviderUsage) != 1 || snapshot.ProviderUsage[0].TotalTokens != 18 {
+		t.Fatalf("provider usage after restart = %+v, want total=18", snapshot.ProviderUsage)
+	}
+}
+
 func TestProviderTokenRequired(t *testing.T) {
-	market := New(config.CityConfig{
+	market, err := New(config.CityConfig{
 		Enabled:               true,
 		RequireProviderTokens: true,
 		Providers: []config.ProviderAccount{{
@@ -53,6 +96,9 @@ func TestProviderTokenRequired(t *testing.T) {
 			Token: "pk-test",
 		}},
 	}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
 
 	if _, err := market.AuthenticateProvider(protocol.Register{NodeID: "node-a"}); !errors.Is(err, ErrUnauthorizedProvider) {
 		t.Fatalf("missing provider token = %v, want ErrUnauthorizedProvider", err)

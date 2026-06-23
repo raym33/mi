@@ -5,6 +5,7 @@ city:
   enabled: false
   name: ""
   require_provider_tokens: false
+  usage_store_path: ""
   consumers: []
   providers: []
 scheduler:
