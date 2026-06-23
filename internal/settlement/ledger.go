@@ -21,49 +21,58 @@ const genesisHash = "genesis"
 var ErrInvalidChain = errors.New("invalid settlement chain")
 
 type Ledger struct {
-	mu       sync.Mutex
-	enabled  bool
-	path     string
-	price    int64
-	shareBPS int64
-	events   []Event
-	lastHash string
+	mu                sync.Mutex
+	enabled           bool
+	path              string
+	price             int64
+	shareBPS          int64
+	targetLatencyMs   int64
+	latencyPenaltyBPS int64
+	events            []Event
+	lastHash          string
 }
 
 type RecordInput struct {
-	RequestID   string
-	ConsumerID  string
-	ProviderID  string
-	NodeID      string
-	Model       string
-	PrivacyTier string
-	Done        protocol.InferDone
+	RequestID        string
+	ConsumerID       string
+	ProviderID       string
+	NodeID           string
+	Model            string
+	PrivacyTier      string
+	Done             protocol.InferDone
+	Latency          time.Duration
+	DispatchAttempts int
 }
 
 type Event struct {
-	Index                int64     `json:"index"`
-	RecordedAt           time.Time `json:"recorded_at"`
-	RequestID            string    `json:"request_id"`
-	ConsumerID           string    `json:"consumer_id"`
-	ProviderID           string    `json:"provider_id,omitempty"`
-	NodeID               string    `json:"node_id,omitempty"`
-	Model                string    `json:"model"`
-	PrivacyTier          string    `json:"privacy_tier"`
-	PromptTokens         int       `json:"prompt_tokens"`
-	CompletionTokens     int       `json:"completion_tokens"`
-	TotalTokens          int       `json:"total_tokens"`
-	PriceMicros          int64     `json:"price_micros"`
-	ProviderRewardMicros int64     `json:"provider_reward_micros"`
-	PreviousHash         string    `json:"previous_hash"`
-	Hash                 string    `json:"hash"`
+	Index                 int64     `json:"index"`
+	RecordedAt            time.Time `json:"recorded_at"`
+	RequestID             string    `json:"request_id"`
+	ConsumerID            string    `json:"consumer_id"`
+	ProviderID            string    `json:"provider_id,omitempty"`
+	NodeID                string    `json:"node_id,omitempty"`
+	Model                 string    `json:"model"`
+	PrivacyTier           string    `json:"privacy_tier"`
+	PromptTokens          int       `json:"prompt_tokens"`
+	CompletionTokens      int       `json:"completion_tokens"`
+	TotalTokens           int       `json:"total_tokens"`
+	LatencyMs             int64     `json:"latency_ms,omitempty"`
+	DispatchAttempts      int       `json:"dispatch_attempts,omitempty"`
+	PriceMicros           int64     `json:"price_micros"`
+	ProviderRewardMicros  int64     `json:"provider_reward_micros"`
+	ProviderPenaltyMicros int64     `json:"provider_penalty_micros,omitempty"`
+	PreviousHash          string    `json:"previous_hash"`
+	Hash                  string    `json:"hash"`
 }
 
 type Balance struct {
-	AccountID    string `json:"account_id"`
-	Events       int64  `json:"events"`
-	TotalTokens  int64  `json:"total_tokens"`
-	DebitMicros  int64  `json:"debit_micros,omitempty"`
-	RewardMicros int64  `json:"reward_micros,omitempty"`
+	AccountID        string `json:"account_id"`
+	Events           int64  `json:"events"`
+	TotalTokens      int64  `json:"total_tokens"`
+	AverageLatencyMs int64  `json:"average_latency_ms,omitempty"`
+	DebitMicros      int64  `json:"debit_micros,omitempty"`
+	RewardMicros     int64  `json:"reward_micros,omitempty"`
+	PenaltyMicros    int64  `json:"penalty_micros,omitempty"`
 }
 
 type Snapshot struct {
@@ -73,6 +82,8 @@ type Snapshot struct {
 	LastHash                     string    `json:"last_hash,omitempty"`
 	PricePerThousandTokensMicros int64     `json:"price_per_thousand_tokens_micros,omitempty"`
 	ProviderRewardShareBPS       int64     `json:"provider_reward_share_bps,omitempty"`
+	TargetLatencyMs              int64     `json:"target_latency_ms,omitempty"`
+	LatencyPenaltyBPS            int64     `json:"latency_penalty_bps,omitempty"`
 	ConsumerBalances             []Balance `json:"consumer_balances,omitempty"`
 	ProviderBalances             []Balance `json:"provider_balances,omitempty"`
 	RecentEvents                 []Event   `json:"recent_events,omitempty"`
@@ -97,12 +108,21 @@ func New(cfg config.SettlementConfig) (*Ledger, error) {
 	if share > 10000 {
 		share = 10000
 	}
+	penalty := cfg.LatencyPenaltyBPS
+	if penalty < 0 {
+		penalty = 0
+	}
+	if penalty > 10000 {
+		penalty = 10000
+	}
 	l := &Ledger{
-		enabled:  cfg.Enabled,
-		path:     cfg.ChainPath,
-		price:    price,
-		shareBPS: share,
-		lastHash: genesisHash,
+		enabled:           cfg.Enabled,
+		path:              cfg.ChainPath,
+		price:             price,
+		shareBPS:          share,
+		targetLatencyMs:   cfg.TargetLatencyMs,
+		latencyPenaltyBPS: penalty,
+		lastHash:          genesisHash,
 	}
 	if l.path != "" {
 		if err := l.load(); err != nil {
@@ -120,21 +140,27 @@ func (l *Ledger) Record(input RecordInput) (Event, error) {
 	}
 	totalTokens := input.Done.PromptTokens + input.Done.OutputTokens
 	priceMicros := l.priceFor(totalTokens)
+	latencyMs := input.Latency.Milliseconds()
+	rewardMicros := priceMicros * l.shareBPS / 10000
+	penaltyMicros := l.penaltyFor(rewardMicros, latencyMs)
 	event := Event{
-		Index:                int64(len(l.events) + 1),
-		RecordedAt:           time.Now().UTC(),
-		RequestID:            input.RequestID,
-		ConsumerID:           input.ConsumerID,
-		ProviderID:           input.ProviderID,
-		NodeID:               input.NodeID,
-		Model:                input.Model,
-		PrivacyTier:          input.PrivacyTier,
-		PromptTokens:         input.Done.PromptTokens,
-		CompletionTokens:     input.Done.OutputTokens,
-		TotalTokens:          totalTokens,
-		PriceMicros:          priceMicros,
-		ProviderRewardMicros: priceMicros * l.shareBPS / 10000,
-		PreviousHash:         l.lastHash,
+		Index:                 int64(len(l.events) + 1),
+		RecordedAt:            time.Now().UTC(),
+		RequestID:             input.RequestID,
+		ConsumerID:            input.ConsumerID,
+		ProviderID:            input.ProviderID,
+		NodeID:                input.NodeID,
+		Model:                 input.Model,
+		PrivacyTier:           input.PrivacyTier,
+		PromptTokens:          input.Done.PromptTokens,
+		CompletionTokens:      input.Done.OutputTokens,
+		TotalTokens:           totalTokens,
+		LatencyMs:             latencyMs,
+		DispatchAttempts:      input.DispatchAttempts,
+		PriceMicros:           priceMicros,
+		ProviderRewardMicros:  rewardMicros - penaltyMicros,
+		ProviderPenaltyMicros: penaltyMicros,
+		PreviousHash:          l.lastHash,
 	}
 	event.Hash = hashEvent(event)
 	if l.path != "" {
@@ -166,6 +192,8 @@ func (l *Ledger) Snapshot(limit int) Snapshot {
 		LastHash:                     l.lastHash,
 		PricePerThousandTokensMicros: l.price,
 		ProviderRewardShareBPS:       l.shareBPS,
+		TargetLatencyMs:              l.targetLatencyMs,
+		LatencyPenaltyBPS:            l.latencyPenaltyBPS,
 		ConsumerBalances:             consumerBalances,
 		ProviderBalances:             providerBalances,
 		RecentEvents:                 recent,
@@ -190,6 +218,16 @@ func (l *Ledger) priceFor(tokens int) int64 {
 		return 0
 	}
 	return int64(tokens) * l.price / 1000
+}
+
+func (l *Ledger) penaltyFor(rewardMicros int64, latencyMs int64) int64 {
+	if rewardMicros <= 0 || l.targetLatencyMs <= 0 || l.latencyPenaltyBPS <= 0 {
+		return 0
+	}
+	if latencyMs <= l.targetLatencyMs {
+		return 0
+	}
+	return rewardMicros * l.latencyPenaltyBPS / 10000
 }
 
 func (l *Ledger) load() error {
@@ -261,6 +299,7 @@ func balances(events []Event) ([]Balance, []Balance) {
 			}
 			balance.Events++
 			balance.TotalTokens += int64(event.TotalTokens)
+			balance.AverageLatencyMs = ((balance.AverageLatencyMs * (balance.Events - 1)) + event.LatencyMs) / balance.Events
 			balance.DebitMicros += event.PriceMicros
 		}
 		if event.ProviderID != "" {
@@ -271,7 +310,9 @@ func balances(events []Event) ([]Balance, []Balance) {
 			}
 			balance.Events++
 			balance.TotalTokens += int64(event.TotalTokens)
+			balance.AverageLatencyMs = ((balance.AverageLatencyMs * (balance.Events - 1)) + event.LatencyMs) / balance.Events
 			balance.RewardMicros += event.ProviderRewardMicros
+			balance.PenaltyMicros += event.ProviderPenaltyMicros
 		}
 	}
 	return balanceValues(consumers), balanceValues(providers)

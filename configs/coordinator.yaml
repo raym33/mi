@@ -18,6 +18,8 @@ settlement:
   chain_path: ""
   price_per_thousand_tokens_micros: 0
   provider_reward_share_bps: 0
+  target_latency_ms: 0
+  latency_penalty_bps: 0
 models:
   aliases:
     - id: "fast"

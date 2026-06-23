@@ -322,7 +322,9 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	declareDispatchTrailers(w)
 
 	sink := sseSink{w: w, flusher: flusher, requestID: requestID, model: responseModel}
+	startedAt := time.Now()
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, &sink)
+	latency := time.Since(startedAt)
 	setDispatchTrailers(w, result)
 	if err != nil {
 		s.market.ReleaseReservation(reservation)
@@ -334,13 +336,15 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 		log.Printf("record usage: %v", err)
 	}
 	if _, err := s.settlement.Record(settlement.RecordInput{
-		RequestID:   requestID,
-		ConsumerID:  consumerID,
-		ProviderID:  result.ProviderID,
-		NodeID:      result.NodeID,
-		Model:       responseModel,
-		PrivacyTier: req.PrivacyTier,
-		Done:        done,
+		RequestID:        requestID,
+		ConsumerID:       consumerID,
+		ProviderID:       result.ProviderID,
+		NodeID:           result.NodeID,
+		Model:            responseModel,
+		PrivacyTier:      req.PrivacyTier,
+		Done:             done,
+		Latency:          latency,
+		DispatchAttempts: result.Attempts,
 	}); err != nil {
 		log.Printf("record settlement: %v", err)
 	}
@@ -361,7 +365,9 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 	var content string
 	sink := collectSink{onChunk: func(chunk string) { content += chunk }}
 	w.Header().Set("X-Mi-Privacy-Tier", req.PrivacyTier)
+	startedAt := time.Now()
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, sink)
+	latency := time.Since(startedAt)
 	setDispatchHeaders(w, result)
 	if err != nil {
 		s.market.ReleaseReservation(reservation)
@@ -377,13 +383,15 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 		log.Printf("record usage: %v", err)
 	}
 	if _, err := s.settlement.Record(settlement.RecordInput{
-		RequestID:   requestID,
-		ConsumerID:  consumerID,
-		ProviderID:  result.ProviderID,
-		NodeID:      result.NodeID,
-		Model:       responseModel,
-		PrivacyTier: req.PrivacyTier,
-		Done:        done,
+		RequestID:        requestID,
+		ConsumerID:       consumerID,
+		ProviderID:       result.ProviderID,
+		NodeID:           result.NodeID,
+		Model:            responseModel,
+		PrivacyTier:      req.PrivacyTier,
+		Done:             done,
+		Latency:          latency,
+		DispatchAttempts: result.Attempts,
 	}); err != nil {
 		log.Printf("record settlement: %v", err)
 	}

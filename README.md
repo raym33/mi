@@ -144,7 +144,7 @@ See [Renting Compute Privately](docs/rental-privacy.md).
 
 ## Settlement And Rewards
 
-City deployments can enable a tamper-evident settlement chain. It records request metadata, token usage, consumer debits, provider rewards, and linked hashes without storing prompt bodies.
+City deployments can enable a tamper-evident settlement chain. It records request metadata, token usage, latency, dispatch attempts, consumer debits, provider rewards, optional SLA penalties, and linked hashes without storing prompt bodies.
 
 Provider reputation combines node health, cooldowns, error streaks, completed settlement events, tokens served, and accrued rewards.
 

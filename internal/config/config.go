@@ -54,6 +54,8 @@ type SettlementConfig struct {
 	ChainPath                    string `yaml:"chain_path"`
 	PricePerThousandTokensMicros int64  `yaml:"price_per_thousand_tokens_micros"`
 	ProviderRewardShareBPS       int64  `yaml:"provider_reward_share_bps"`
+	TargetLatencyMs              int64  `yaml:"target_latency_ms"`
+	LatencyPenaltyBPS            int64  `yaml:"latency_penalty_bps"`
 }
 
 type ModelConfig struct {

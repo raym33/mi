@@ -15,8 +15,10 @@ For every successful inference, the coordinator can append one settlement event:
 - model alias
 - privacy tier
 - prompt, completion, and total tokens
+- latency and dispatch attempts
 - consumer debit in micros
 - provider reward in micros
+- latency penalty in micros, when configured
 - previous event hash
 - current event hash
 
@@ -42,6 +44,8 @@ settlement:
   chain_path: "data/settlement-chain.jsonl"
   price_per_thousand_tokens_micros: 1000
   provider_reward_share_bps: 7000
+  target_latency_ms: 5000
+  latency_penalty_bps: 1000
 ```
 
 Fields:
@@ -50,8 +54,10 @@ Fields:
 - `chain_path`: append-only JSONL chain path.
 - `price_per_thousand_tokens_micros`: consumer debit rate per 1,000 tokens.
 - `provider_reward_share_bps`: provider share of the debit, in basis points.
+- `target_latency_ms`: soft SLA target for successful requests.
+- `latency_penalty_bps`: provider reward reduction when a successful request exceeds the target latency.
 
-Example: if total tokens are `1000`, price is `1000` micros, and provider share is `7000`, the consumer debit is `1000` micros and the provider reward is `700` micros.
+Example: if total tokens are `1000`, price is `1000` micros, and provider share is `7000`, the consumer debit is `1000` micros and the base provider reward is `700` micros. If the request exceeds `target_latency_ms` and `latency_penalty_bps` is `1000`, the provider reward is reduced by 10%.
 
 ## Admin endpoints
 

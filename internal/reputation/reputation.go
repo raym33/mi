@@ -15,22 +15,24 @@ type Report struct {
 }
 
 type ProviderReputation struct {
-	ProviderID      string           `json:"provider_id"`
-	DisplayName     string           `json:"display_name,omitempty"`
-	PrivacyMode     string           `json:"privacy_mode,omitempty"`
-	Disabled        bool             `json:"disabled,omitempty"`
-	Score           int              `json:"score"`
-	Grade           string           `json:"grade"`
-	TotalNodes      int              `json:"total_nodes"`
-	HealthyNodes    int              `json:"healthy_nodes"`
-	CooldownNodes   int              `json:"cooldown_nodes"`
-	ActiveRequests  int              `json:"active_requests"`
-	ErrorStreak     int              `json:"error_streak"`
-	CompletedEvents int64            `json:"completed_events"`
-	TotalTokens     int64            `json:"total_tokens"`
-	RewardMicros    int64            `json:"reward_micros"`
-	Notes           []string         `json:"notes,omitempty"`
-	Nodes           []NodeReputation `json:"nodes,omitempty"`
+	ProviderID       string           `json:"provider_id"`
+	DisplayName      string           `json:"display_name,omitempty"`
+	PrivacyMode      string           `json:"privacy_mode,omitempty"`
+	Disabled         bool             `json:"disabled,omitempty"`
+	Score            int              `json:"score"`
+	Grade            string           `json:"grade"`
+	TotalNodes       int              `json:"total_nodes"`
+	HealthyNodes     int              `json:"healthy_nodes"`
+	CooldownNodes    int              `json:"cooldown_nodes"`
+	ActiveRequests   int              `json:"active_requests"`
+	ErrorStreak      int              `json:"error_streak"`
+	CompletedEvents  int64            `json:"completed_events"`
+	TotalTokens      int64            `json:"total_tokens"`
+	AverageLatencyMs int64            `json:"average_latency_ms,omitempty"`
+	RewardMicros     int64            `json:"reward_micros"`
+	PenaltyMicros    int64            `json:"penalty_micros,omitempty"`
+	Notes            []string         `json:"notes,omitempty"`
+	Nodes            []NodeReputation `json:"nodes,omitempty"`
 }
 
 type NodeReputation struct {
@@ -59,7 +61,9 @@ func Build(citySnapshot city.Snapshot, nodes []scheduler.NodeView, settlementSna
 		item := providerItem(providers, balance.AccountID)
 		item.CompletedEvents = balance.Events
 		item.TotalTokens = balance.TotalTokens
+		item.AverageLatencyMs = balance.AverageLatencyMs
 		item.RewardMicros = balance.RewardMicros
+		item.PenaltyMicros = balance.PenaltyMicros
 	}
 	for _, node := range nodes {
 		providerID := node.ProviderID
@@ -140,6 +144,10 @@ func score(item ProviderReputation) (int, []string) {
 	if item.ErrorStreak > 0 {
 		notes = append(notes, "recent node errors")
 		value -= min(25, item.ErrorStreak*5)
+	}
+	if item.PenaltyMicros > 0 {
+		notes = append(notes, "SLA latency penalties applied")
+		value -= min(20, int(item.PenaltyMicros/100))
 	}
 	if item.TotalNodes > 0 && item.HealthyNodes == 0 {
 		notes = append(notes, "all nodes unhealthy")

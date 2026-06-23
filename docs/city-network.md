@@ -11,6 +11,7 @@ It introduces four primitives:
 - Consumer quotas: each API key can belong to an account with a token limit.
 - Quota reservations: estimated request budget is reserved before dispatch, then reconciled with actual usage when the request finishes.
 - Settlement chain: successful inference can create tamper-evident debit and reward events.
+- SLA penalties: settlement can reduce provider rewards when successful requests exceed a configured latency target.
 - Persistent local usage: usage survives coordinator restarts when `usage_store_path` is configured.
 - Privacy tiers: private prompts stay on trusted nodes, while public prompts can use rented provider capacity.
 

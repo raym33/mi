@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/raym33/mi/internal/config"
 	"github.com/raym33/mi/internal/protocol"
@@ -17,18 +18,22 @@ func TestLedgerRecordsAndVerifiesEvents(t *testing.T) {
 		ChainPath:                    path,
 		PricePerThousandTokensMicros: 2000,
 		ProviderRewardShareBPS:       7000,
+		TargetLatencyMs:              1000,
+		LatencyPenaltyBPS:            1000,
 	})
 	if err != nil {
 		t.Fatalf("new ledger: %v", err)
 	}
 	event, err := ledger.Record(RecordInput{
-		RequestID:   "req-1",
-		ConsumerID:  "studio",
-		ProviderID:  "provider-a",
-		NodeID:      "node-a",
-		Model:       "fast",
-		PrivacyTier: "public",
-		Done:        protocol.InferDone{PromptTokens: 400, OutputTokens: 600},
+		RequestID:        "req-1",
+		ConsumerID:       "studio",
+		ProviderID:       "provider-a",
+		NodeID:           "node-a",
+		Model:            "fast",
+		PrivacyTier:      "public",
+		Done:             protocol.InferDone{PromptTokens: 400, OutputTokens: 600},
+		Latency:          1500 * time.Millisecond,
+		DispatchAttempts: 2,
 	})
 	if err != nil {
 		t.Fatalf("record: %v", err)
@@ -36,8 +41,11 @@ func TestLedgerRecordsAndVerifiesEvents(t *testing.T) {
 	if event.Index != 1 || event.PreviousHash != genesisHash || event.Hash == "" {
 		t.Fatalf("event hash chain fields = %+v", event)
 	}
-	if event.PriceMicros != 2000 || event.ProviderRewardMicros != 1400 {
-		t.Fatalf("prices = price %d reward %d, want 2000/1400", event.PriceMicros, event.ProviderRewardMicros)
+	if event.PriceMicros != 2000 || event.ProviderRewardMicros != 1260 || event.ProviderPenaltyMicros != 140 {
+		t.Fatalf("prices = price %d reward %d penalty %d, want 2000/1260/140", event.PriceMicros, event.ProviderRewardMicros, event.ProviderPenaltyMicros)
+	}
+	if event.LatencyMs != 1500 || event.DispatchAttempts != 2 {
+		t.Fatalf("latency/attempts = %d/%d, want 1500/2", event.LatencyMs, event.DispatchAttempts)
 	}
 	if verification := ledger.Verify(); !verification.Valid || verification.Events != 1 || verification.LastHash != event.Hash {
 		t.Fatalf("verification = %+v", verification)
@@ -46,7 +54,7 @@ func TestLedgerRecordsAndVerifiesEvents(t *testing.T) {
 	if len(snapshot.ConsumerBalances) != 1 || snapshot.ConsumerBalances[0].DebitMicros != 2000 {
 		t.Fatalf("consumer balances = %+v", snapshot.ConsumerBalances)
 	}
-	if len(snapshot.ProviderBalances) != 1 || snapshot.ProviderBalances[0].RewardMicros != 1400 {
+	if len(snapshot.ProviderBalances) != 1 || snapshot.ProviderBalances[0].RewardMicros != 1260 || snapshot.ProviderBalances[0].PenaltyMicros != 140 {
 		t.Fatalf("provider balances = %+v", snapshot.ProviderBalances)
 	}
 }

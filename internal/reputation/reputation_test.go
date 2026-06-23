@@ -21,8 +21,8 @@ func TestBuildRanksHealthyProviders(t *testing.T) {
 			{ID: "node-bad", ProviderID: "bad", Healthy: true, InCooldown: true, ErrorStreak: 2, MaxConcurrent: 1, LastSeen: time.Now()},
 		},
 		settlement.Snapshot{ProviderBalances: []settlement.Balance{
-			{AccountID: "good", Events: 12, TotalTokens: 5000, RewardMicros: 3500},
-			{AccountID: "bad", Events: 1, TotalTokens: 100, RewardMicros: 70},
+			{AccountID: "good", Events: 12, TotalTokens: 5000, AverageLatencyMs: 250, RewardMicros: 3500},
+			{AccountID: "bad", Events: 1, TotalTokens: 100, AverageLatencyMs: 2500, RewardMicros: 70, PenaltyMicros: 500},
 		}},
 	)
 	if len(report.Providers) != 3 {
@@ -36,8 +36,8 @@ func TestBuildRanksHealthyProviders(t *testing.T) {
 		t.Fatalf("disabled provider = %+v, want zero score/F", disabled)
 	}
 	bad := findProvider(report, "bad")
-	if len(bad.Notes) == 0 {
-		t.Fatalf("bad provider notes empty, want risk notes")
+	if len(bad.Notes) == 0 || bad.PenaltyMicros != 500 || bad.AverageLatencyMs != 2500 {
+		t.Fatalf("bad provider = %+v, want penalty/latency risk notes", bad)
 	}
 }
 

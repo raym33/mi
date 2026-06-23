@@ -25,6 +25,8 @@ settlement:
   chain_path: "data/settlement-chain.jsonl"
   price_per_thousand_tokens_micros: 1000
   provider_reward_share_bps: 7000
+  target_latency_ms: 5000
+  latency_penalty_bps: 1000
 models:
   aliases:
     - id: "fast"
