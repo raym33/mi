@@ -6,6 +6,8 @@ city: ""
 coordinator_url: "ws://localhost:8080/ws/node"
 tls:
   ca_file: ""
+  cert_file: ""
+  key_file: ""
   insecure_skip_verify: false
 ollama_url: "http://localhost:11434"
 models:

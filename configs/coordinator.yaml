@@ -4,6 +4,7 @@ admin_token: ""
 tls:
   cert_file: ""
   key_file: ""
+  node_client_ca_file: ""
 city:
   enabled: false
   name: ""

@@ -32,6 +32,13 @@ Start a node over WSS:
 make run-city-node-tls
 ```
 
+The TLS example also enables node mTLS:
+
+- The coordinator trusts node certificates signed by `certs/ca.crt`.
+- The node presents `certs/node.crt` and `certs/node.key`.
+- `/ws/node` rejects connections without a valid client certificate.
+- Normal HTTPS API clients still authenticate with API keys and do not need node certificates.
+
 Call the API with the generated CA:
 
 ```bash
@@ -52,6 +59,17 @@ Then set:
 coordinator_url: "wss://mi.example.local:8443/ws/node"
 tls:
   ca_file: "certs/ca.crt"
+  cert_file: "certs/node.crt"
+  key_file: "certs/node.key"
+```
+
+On the coordinator:
+
+```yaml
+tls:
+  cert_file: "certs/server.crt"
+  key_file: "certs/server.key"
+  node_client_ca_file: "certs/ca.crt"
 ```
 
 ## Development escape hatch
@@ -64,3 +82,12 @@ tls:
 ```
 
 Use this only for temporary local experiments. It disables certificate verification and should not be used for shared networks.
+
+## Auth Layers
+
+For city mode, the intended stack is:
+
+- HTTPS/WSS encrypts traffic.
+- Node mTLS proves the connecting process has a trusted node certificate.
+- Provider tokens bind that node to a provider account and can be rotated or revoked.
+- Consumer API keys authorize OpenAI-compatible API access and enforce quotas.

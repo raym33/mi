@@ -6,6 +6,8 @@ city: "Madrid"
 coordinator_url: "wss://localhost:8443/ws/node"
 tls:
   ca_file: "certs/ca.crt"
+  cert_file: "certs/node.crt"
+  key_file: "certs/node.key"
   insecure_skip_verify: false
 ollama_url: "http://localhost:11434"
 models:

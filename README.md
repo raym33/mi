@@ -83,3 +83,5 @@ make dev-certs
 make run-city-coordinator-tls
 make run-city-node-tls
 ```
+
+The TLS example includes mTLS for node agents.

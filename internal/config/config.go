@@ -17,8 +17,9 @@ type Coordinator struct {
 }
 
 type ServerTLSConfig struct {
-	CertFile string `yaml:"cert_file"`
-	KeyFile  string `yaml:"key_file"`
+	CertFile         string `yaml:"cert_file"`
+	KeyFile          string `yaml:"key_file"`
+	NodeClientCAFile string `yaml:"node_client_ca_file"`
 }
 
 type CityConfig struct {
@@ -63,6 +64,8 @@ type NodeAgent struct {
 
 type ClientTLSConfig struct {
 	CAFile             string `yaml:"ca_file"`
+	CertFile           string `yaml:"cert_file"`
+	KeyFile            string `yaml:"key_file"`
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 }
 

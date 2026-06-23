@@ -21,10 +21,26 @@ CN = $COMMON_NAME
 
 [req_ext]
 subjectAltName = @alt_names
+extendedKeyUsage = serverAuth
 
 [alt_names]
 DNS.1 = $ALT_DNS
 IP.1 = $ALT_IP
+EOF
+
+cat > "$OUT_DIR/node.openssl.cnf" <<EOF
+[req]
+default_bits = 2048
+prompt = no
+default_md = sha256
+distinguished_name = dn
+req_extensions = req_ext
+
+[dn]
+CN = mi-node-dev
+
+[req_ext]
+extendedKeyUsage = clientAuth
 EOF
 
 openssl genrsa -out "$OUT_DIR/ca.key" 4096
@@ -52,6 +68,23 @@ openssl x509 -req \
   -extensions req_ext \
   -extfile "$OUT_DIR/server.openssl.cnf"
 
+openssl genrsa -out "$OUT_DIR/node.key" 2048
+openssl req -new \
+  -key "$OUT_DIR/node.key" \
+  -out "$OUT_DIR/node.csr" \
+  -config "$OUT_DIR/node.openssl.cnf"
+
+openssl x509 -req \
+  -in "$OUT_DIR/node.csr" \
+  -CA "$OUT_DIR/ca.crt" \
+  -CAkey "$OUT_DIR/ca.key" \
+  -CAcreateserial \
+  -out "$OUT_DIR/node.crt" \
+  -days 825 \
+  -sha256 \
+  -extensions req_ext \
+  -extfile "$OUT_DIR/node.openssl.cnf"
+
 chmod 600 "$OUT_DIR"/*.key
 
 cat <<EOF
@@ -59,6 +92,8 @@ Wrote development certificates to $OUT_DIR:
   CA:      $OUT_DIR/ca.crt
   Server:  $OUT_DIR/server.crt
   Key:     $OUT_DIR/server.key
+  Node:    $OUT_DIR/node.crt
+  NodeKey: $OUT_DIR/node.key
 
 Use configs/coordinator.city.tls.example.yaml and configs/node-agent.city.tls.example.yaml.
 EOF

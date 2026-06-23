@@ -3,6 +3,7 @@ admin_token: "admin-dev-token"
 tls:
   cert_file: "certs/server.crt"
   key_file: "certs/server.key"
+  node_client_ca_file: "certs/ca.crt"
 city:
   enabled: true
   name: "Madrid Local AI"

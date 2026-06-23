@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -58,6 +60,29 @@ func TestAdminEnrollmentRoutes(t *testing.T) {
 	}](t, mux, http.MethodDelete, "/admin/providers/provider-a", `{}`)
 	if !disabledProvider.Provider.Disabled {
 		t.Fatal("provider should be disabled")
+	}
+}
+
+func TestNodeWebSocketRequiresClientCertificate(t *testing.T) {
+	market, err := city.New(config.CityConfig{}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	s := &server{registry: scheduler.NewRegistry(), market: market, requireNodeClientCert: true}
+
+	req := httptest.NewRequest(http.MethodGet, "/ws/node", nil)
+	rec := httptest.NewRecorder()
+	s.nodeWebSocket(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing client cert status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/ws/node", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{}}}
+	rec = httptest.NewRecorder()
+	s.nodeWebSocket(rec, req)
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatal("request with client cert should pass mTLS gate")
 	}
 }
 

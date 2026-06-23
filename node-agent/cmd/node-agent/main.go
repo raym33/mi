@@ -197,7 +197,7 @@ func loadAverage() float64 {
 }
 
 func dialOptions(cfg config.NodeAgent) (*websocket.DialOptions, error) {
-	if cfg.TLS.CAFile == "" && !cfg.TLS.InsecureSkipVerify {
+	if cfg.TLS.CAFile == "" && cfg.TLS.CertFile == "" && cfg.TLS.KeyFile == "" && !cfg.TLS.InsecureSkipVerify {
 		return nil, nil
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.TLS.InsecureSkipVerify}
@@ -211,6 +211,16 @@ func dialOptions(cfg config.NodeAgent) (*websocket.DialOptions, error) {
 			return nil, errors.New("failed to parse tls.ca_file")
 		}
 		tlsConfig.RootCAs = roots
+	}
+	if cfg.TLS.CertFile != "" || cfg.TLS.KeyFile != "" {
+		if cfg.TLS.CertFile == "" || cfg.TLS.KeyFile == "" {
+			return nil, errors.New("both tls.cert_file and tls.key_file are required")
+		}
+		cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
 	return &websocket.DialOptions{
 		HTTPClient: &http.Client{

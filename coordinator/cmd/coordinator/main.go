@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -24,9 +26,10 @@ import (
 )
 
 type server struct {
-	registry   *scheduler.Registry
-	market     *city.Market
-	adminToken string
+	registry              *scheduler.Registry
+	market                *city.Market
+	adminToken            string
+	requireNodeClientCert bool
 }
 
 func main() {
@@ -41,7 +44,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s := &server{registry: scheduler.NewRegistry(), market: market, adminToken: cfg.AdminToken}
+	s := &server{
+		registry:              scheduler.NewRegistry(),
+		market:                market,
+		adminToken:            cfg.AdminToken,
+		requireNodeClientCert: cfg.TLS.NodeClientCAFile != "",
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
@@ -307,6 +315,10 @@ func (s *server) writeStreamError(w http.ResponseWriter, flusher http.Flusher, e
 }
 
 func (s *server) nodeWebSocket(w http.ResponseWriter, r *http.Request) {
+	if s.requireNodeClientCert && !hasClientCertificate(r) {
+		http.Error(w, "node client certificate required", http.StatusUnauthorized)
+		return
+	}
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		log.Printf("accept node websocket: %v", err)
@@ -537,12 +549,22 @@ func consumerID(ctx context.Context) string {
 }
 
 func serveHTTP(cfg config.Coordinator, handler http.Handler) error {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if cfg.TLS.NodeClientCAFile != "" {
+		certPool, err := loadCertPool(cfg.TLS.NodeClientCAFile)
+		if err != nil {
+			return err
+		}
+		tlsConfig.ClientCAs = certPool
+		tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
+	}
 	server := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: handler,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		},
+		// Keep WebSocket upgrades on HTTP/1.1 until the provider wire protocol
+		// explicitly supports RFC 8441 WebSockets over HTTP/2.
+		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
+		TLSConfig:    tlsConfig,
 	}
 	if cfg.TLS.CertFile != "" || cfg.TLS.KeyFile != "" {
 		if cfg.TLS.CertFile == "" || cfg.TLS.KeyFile == "" {
@@ -551,5 +573,24 @@ func serveHTTP(cfg config.Coordinator, handler http.Handler) error {
 		log.Printf("TLS enabled for coordinator")
 		return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
 	}
+	if cfg.TLS.NodeClientCAFile != "" {
+		return errors.New("tls.node_client_ca_file requires tls.cert_file and tls.key_file")
+	}
 	return server.ListenAndServe()
+}
+
+func loadCertPool(path string) (*x509.CertPool, error) {
+	certPEM, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(certPEM) {
+		return nil, errors.New("failed to parse certificate authority file")
+	}
+	return pool, nil
+}
+
+func hasClientCertificate(r *http.Request) bool {
+	return r.TLS != nil && len(r.TLS.PeerCertificates) > 0
 }

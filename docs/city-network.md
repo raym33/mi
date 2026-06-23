@@ -32,6 +32,8 @@ make dev-certs
 make run-city-coordinator-tls
 ```
 
+The TLS example also enables node mTLS, so provider nodes need `certs/node.crt` and `certs/node.key`.
+
 ## Join as a provider
 
 On a Mac with Ollama running:
