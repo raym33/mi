@@ -5,6 +5,17 @@ public_name: "Ray Mac mini"
 city: "Madrid"
 privacy_mode: "private"
 coordinator_url: "ws://localhost:8080/ws/node"
+backend:
+  type: "ollama"
+  url: "http://localhost:11434"
+hardware:
+  kind: "mac"
+  vendor: "apple"
+  model: "mac_mini"
+  soc: "apple_silicon"
+  accelerators: ["metal"]
+  power_mode: "always_on"
+  network_mode: "lan"
 ollama_url: "http://localhost:11434"
 models:
   - "llama3.1:8b"

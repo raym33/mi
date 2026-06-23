@@ -1,13 +1,13 @@
 # mi design
 
-`mi` is a local-first inference control plane for Mac fleets.
+`mi` is a local-first inference control plane for Apple Silicon fleets today and broader ARM edge fleets over time.
 
 ## Principles
 
 - Local network first, public network later.
 - OpenAI-compatible API from day one.
 - Node agents connect outbound so Macs do not need open inbound ports.
-- Ollama first for speed, MLX next for Apple Silicon performance.
+- Backend abstraction first: Ollama today, MLX for Apple Silicon, QNN/LiteRT/Vulkan paths for future Android and Xiaomi nodes.
 - Scheduler decisions should be based on observed behavior, not static specs.
 - Prompt logging is off by design; logs should use request IDs, model IDs, and timing.
 - Users call stable aliases like `fast` or `code`; the coordinator maps those to concrete node models.
@@ -19,7 +19,7 @@
 3. The coordinator normalizes the OpenAI request into an internal inference request.
 4. The scheduler reserves a healthy node that advertises the requested model and accepts the requested privacy tier.
 5. The coordinator sends the request to that node over the node WebSocket.
-6. The node streams chunks from Ollama back to the coordinator.
+6. The node streams chunks from its configured backend back to the coordinator.
 7. The coordinator emits OpenAI-style SSE chunks to the client.
 
 ## Failover
@@ -49,12 +49,27 @@ Admin node snapshots expose:
 - `cooldown_until`
 - `last_error`
 - `in_cooldown`
+- `backend`
+- `device_kind`
+- `device_vendor`
+- `soc`
+- `accelerators`
+
+## Backend And Hardware Metadata
+
+Nodes advertise their inference backend and hardware profile during registration. This does not change scheduling yet, but it gives the coordinator enough information to support future policies such as:
+
+- route Apple Silicon nodes to MLX or Metal-backed models
+- route Snapdragon/Xiaomi nodes to QNN-backed models
+- prefer Android nodes only for charging/Wi-Fi opportunistic public workloads
+- score challenge jobs by backend and accelerator, not only by provider
 
 ## Next milestones
 
 - Persistent node identity and API-key scoped node enrollment.
 - TLS or mTLS for LAN/VPN deployments.
 - MLX backend.
+- Android agent and QNN/LiteRT backend experiments.
 - Model aliases and model registry config.
 - Dashboard with node health, loaded models, queue depth, TTFT, and tokens/s.
 - LaunchAgent installer for macOS nodes.

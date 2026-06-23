@@ -11,11 +11,13 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/raym33/mi/internal/backend"
 	"github.com/raym33/mi/internal/config"
 	"github.com/raym33/mi/internal/ollama"
 	"github.com/raym33/mi/internal/privacy"
@@ -25,9 +27,9 @@ import (
 )
 
 type agent struct {
-	cfg    config.NodeAgent
-	ollama *ollama.Client
-	active atomic.Int64
+	cfg     config.NodeAgent
+	backend backend.Runtime
+	active  atomic.Int64
 }
 
 func main() {
@@ -42,7 +44,12 @@ func main() {
 		cfg.NodeID = defaultNodeID()
 	}
 
-	a := &agent{cfg: cfg, ollama: ollama.New(cfg.OllamaURL)}
+	runtimeBackend, err := newInferenceBackend(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	a := &agent{cfg: cfg, backend: runtimeBackend}
 	for {
 		if err := a.run(context.Background()); err != nil {
 			log.Printf("agent disconnected: %v", err)
@@ -80,6 +87,14 @@ func (a *agent) run(ctx context.Context) error {
 			Hostname:      hostname,
 			Arch:          runtime.GOARCH,
 			OS:            runtime.GOOS,
+			Backend:       a.backend.Name(),
+			DeviceKind:    a.cfg.Hardware.Kind,
+			DeviceVendor:  a.cfg.Hardware.Vendor,
+			DeviceModel:   a.cfg.Hardware.Model,
+			SoC:           a.cfg.Hardware.SoC,
+			Accelerators:  a.cfg.Hardware.Accelerators,
+			PowerMode:     a.cfg.Hardware.PowerMode,
+			NetworkMode:   a.cfg.Hardware.NetworkMode,
 			Models:        a.cfg.Models,
 			MaxConcurrent: a.cfg.MaxConcurrent,
 		},
@@ -155,7 +170,7 @@ func (a *agent) handleInference(ctx context.Context, conn *safeConn, requestID s
 	a.active.Add(1)
 	defer a.active.Add(-1)
 
-	done, err := a.ollama.Chat(ctx, req, func(content string) error {
+	done, err := a.backend.Chat(ctx, req, func(content string) error {
 		return conn.writeJSON(ctx, protocol.Envelope{
 			Type:      "chunk",
 			RequestID: requestID,
@@ -171,6 +186,15 @@ func (a *agent) handleInference(ctx context.Context, conn *safeConn, requestID s
 		return
 	}
 	_ = conn.writeJSON(ctx, protocol.Envelope{Type: "done", RequestID: requestID, Done: &done})
+}
+
+func newInferenceBackend(cfg config.NodeAgent) (backend.Runtime, error) {
+	switch strings.ToLower(cfg.Backend.Type) {
+	case "", "ollama":
+		return ollama.New(cfg.Backend.URL), nil
+	default:
+		return nil, errors.New("unsupported backend type: " + cfg.Backend.Type)
+	}
 }
 
 type safeConn struct {

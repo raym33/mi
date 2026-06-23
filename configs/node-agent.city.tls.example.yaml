@@ -10,6 +10,17 @@ tls:
   cert_file: "certs/node.crt"
   key_file: "certs/node.key"
   insecure_skip_verify: false
+backend:
+  type: "ollama"
+  url: "http://localhost:11434"
+hardware:
+  kind: "mac"
+  vendor: "apple"
+  model: "mac_mini"
+  soc: "apple_silicon"
+  accelerators: ["metal"]
+  power_mode: "always_on"
+  network_mode: "lan"
 ollama_url: "http://localhost:11434"
 models:
   - "llama3.1:8b"

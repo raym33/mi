@@ -21,6 +21,10 @@ func New(baseURL string) *Client {
 	return &Client{baseURL: strings.TrimRight(baseURL, "/"), http: http.DefaultClient}
 }
 
+func (c *Client) Name() string {
+	return "ollama"
+}
+
 type chatRequest struct {
 	Model    string                     `json:"model"`
 	Messages []protocol.ProtocolMessage `json:"messages"`

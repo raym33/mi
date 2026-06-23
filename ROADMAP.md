@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap is intentionally practical. `mi` should become the simplest way to pool local Mac inference, run private team AI, and rent non-sensitive local compute inside trusted communities.
+This roadmap is intentionally practical. `mi` should become the simplest way to pool local Apple Silicon and ARM edge inference, run private team AI, and rent non-sensitive local compute inside trusted communities.
 
 ## Now
 
@@ -22,6 +22,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Scheduler failover before first token.
 - Cooldowns for unstable nodes.
 - Coordinator-enforced privacy tiers for private, community, and public rented compute.
+- Node backend abstraction and hardware metadata for future Android, Snapdragon, Xiaomi, MLX, QNN, and LiteRT support.
 
 ## Next
 
@@ -35,10 +36,12 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - macOS LaunchAgent installer for always-on nodes.
 - Better admin and operator documentation.
 - SQLite storage for larger city networks.
+- Android/Xiaomi node-agent design and prototype.
 
 ## Later
 
 - MLX-native backend for better Apple Silicon performance.
+- QNN/LiteRT/llama.cpp-Vulkan Android backends for Snapdragon and Xiaomi devices.
 - Dashboard for node health, model availability, usage, and earnings.
 - Request admission control and fair queueing.
 - Multi-model routing policies.

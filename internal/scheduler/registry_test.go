@@ -47,6 +47,37 @@ func TestRemoveProviderDisconnectsOnlyThatProvider(t *testing.T) {
 	}
 }
 
+func TestRegisterExposesBackendAndHardwareMetadata(t *testing.T) {
+	registry := NewRegistry()
+	registry.Register(protocol.Register{
+		NodeID:       "xiaomi-node",
+		ProviderID:   "provider-a",
+		Backend:      "ort-qnn",
+		DeviceKind:   "android",
+		DeviceVendor: "xiaomi",
+		DeviceModel:  "xiaomi_15_ultra",
+		SoC:          "snapdragon_8_elite",
+		Accelerators: []string{"adreno", "hexagon_npu"},
+		Models:       []string{"llama3.2-3b-qnn"},
+	}, &fakeConn{})
+
+	nodes := registry.Snapshot()
+	if len(nodes) != 1 {
+		t.Fatalf("nodes = %+v, want one node", nodes)
+	}
+	node := nodes[0]
+	if node.Backend != "ort-qnn" || node.DeviceKind != "android" || node.DeviceVendor != "xiaomi" || node.SoC != "snapdragon_8_elite" {
+		t.Fatalf("node metadata = %+v, want android/xiaomi/qnn", node)
+	}
+	if len(node.Accelerators) != 2 || node.Accelerators[0] != "adreno" || node.Accelerators[1] != "hexagon_npu" {
+		t.Fatalf("accelerators = %+v, want sorted accelerator list", node.Accelerators)
+	}
+	status := registry.NetworkStatus()
+	if len(status.Backends) != 1 || status.Backends[0] != "ort-qnn" || len(status.DeviceKinds) != 1 || status.DeviceKinds[0] != "android" {
+		t.Fatalf("status = %+v, want backend and device kind", status)
+	}
+}
+
 func TestDispatchRetriesBeforeFirstChunk(t *testing.T) {
 	registry := NewRegistry()
 	first := &scriptedConn{err: errors.New("cold start failed")}

@@ -42,6 +42,12 @@ type ProviderReputation struct {
 type NodeReputation struct {
 	NodeID        string   `json:"node_id"`
 	PublicName    string   `json:"public_name,omitempty"`
+	Backend       string   `json:"backend,omitempty"`
+	DeviceKind    string   `json:"device_kind,omitempty"`
+	DeviceVendor  string   `json:"device_vendor,omitempty"`
+	DeviceModel   string   `json:"device_model,omitempty"`
+	SoC           string   `json:"soc,omitempty"`
+	Accelerators  []string `json:"accelerators,omitempty"`
 	Healthy       bool     `json:"healthy"`
 	InCooldown    bool     `json:"in_cooldown"`
 	ErrorStreak   int      `json:"error_streak,omitempty"`
@@ -93,6 +99,12 @@ func Build(citySnapshot city.Snapshot, nodes []scheduler.NodeView, settlementSna
 		item.Nodes = append(item.Nodes, NodeReputation{
 			NodeID:        node.ID,
 			PublicName:    node.PublicName,
+			Backend:       node.Backend,
+			DeviceKind:    node.DeviceKind,
+			DeviceVendor:  node.DeviceVendor,
+			DeviceModel:   node.DeviceModel,
+			SoC:           node.SoC,
+			Accelerators:  node.Accelerators,
 			Healthy:       node.Healthy,
 			InCooldown:    node.InCooldown,
 			ErrorStreak:   node.ErrorStreak,

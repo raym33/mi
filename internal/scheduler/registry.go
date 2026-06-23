@@ -41,6 +41,14 @@ type Node struct {
 	PrivacyMode   string
 	PrivacyTiers  map[string]bool
 	Hostname      string
+	Backend       string
+	DeviceKind    string
+	DeviceVendor  string
+	DeviceModel   string
+	SoC           string
+	Accelerators  map[string]bool
+	PowerMode     string
+	NetworkMode   string
 	Models        map[string]bool
 	MaxConcurrent int
 	Active        int
@@ -62,6 +70,14 @@ type NodeView struct {
 	PrivacyMode   string    `json:"privacy_mode,omitempty"`
 	PrivacyTiers  []string  `json:"privacy_tiers,omitempty"`
 	Hostname      string    `json:"hostname"`
+	Backend       string    `json:"backend,omitempty"`
+	DeviceKind    string    `json:"device_kind,omitempty"`
+	DeviceVendor  string    `json:"device_vendor,omitempty"`
+	DeviceModel   string    `json:"device_model,omitempty"`
+	SoC           string    `json:"soc,omitempty"`
+	Accelerators  []string  `json:"accelerators,omitempty"`
+	PowerMode     string    `json:"power_mode,omitempty"`
+	NetworkMode   string    `json:"network_mode,omitempty"`
 	Models        []string  `json:"models"`
 	MaxConcurrent int       `json:"max_concurrent"`
 	Active        int       `json:"active"`
@@ -87,6 +103,10 @@ type NetworkStatus struct {
 	Models            []string `json:"models"`
 	Cities            []string `json:"cities,omitempty"`
 	PrivacyTiers      []string `json:"privacy_tiers,omitempty"`
+	Backends          []string `json:"backends,omitempty"`
+	DeviceKinds       []string `json:"device_kinds,omitempty"`
+	Accelerators      []string `json:"accelerators,omitempty"`
+	SoCs              []string `json:"socs,omitempty"`
 }
 
 type DispatchResult struct {
@@ -127,6 +147,12 @@ func (r *Registry) Register(msg protocol.Register, conn NodeConn) {
 	for _, tier := range privacyTiers {
 		acceptedPrivacy[tier] = true
 	}
+	accelerators := map[string]bool{}
+	for _, accelerator := range msg.Accelerators {
+		if accelerator != "" {
+			accelerators[accelerator] = true
+		}
+	}
 	r.nodes[msg.NodeID] = &Node{
 		ID:            msg.NodeID,
 		ProviderID:    msg.ProviderID,
@@ -135,6 +161,14 @@ func (r *Registry) Register(msg protocol.Register, conn NodeConn) {
 		PrivacyMode:   msg.PrivacyMode,
 		PrivacyTiers:  acceptedPrivacy,
 		Hostname:      msg.Hostname,
+		Backend:       msg.Backend,
+		DeviceKind:    msg.DeviceKind,
+		DeviceVendor:  msg.DeviceVendor,
+		DeviceModel:   msg.DeviceModel,
+		SoC:           msg.SoC,
+		Accelerators:  accelerators,
+		PowerMode:     msg.PowerMode,
+		NetworkMode:   msg.NetworkMode,
 		Models:        models,
 		MaxConcurrent: max(1, msg.MaxConcurrent),
 		LastSeen:      time.Now(),
@@ -223,6 +257,11 @@ func (r *Registry) Snapshot() []NodeView {
 			privacyTiers = append(privacyTiers, tier)
 		}
 		sort.Strings(privacyTiers)
+		accelerators := make([]string, 0, len(node.Accelerators))
+		for accelerator := range node.Accelerators {
+			accelerators = append(accelerators, accelerator)
+		}
+		sort.Strings(accelerators)
 		out = append(out, NodeView{
 			ID:            node.ID,
 			ProviderID:    node.ProviderID,
@@ -231,6 +270,14 @@ func (r *Registry) Snapshot() []NodeView {
 			PrivacyMode:   node.PrivacyMode,
 			PrivacyTiers:  privacyTiers,
 			Hostname:      node.Hostname,
+			Backend:       node.Backend,
+			DeviceKind:    node.DeviceKind,
+			DeviceVendor:  node.DeviceVendor,
+			DeviceModel:   node.DeviceModel,
+			SoC:           node.SoC,
+			Accelerators:  accelerators,
+			PowerMode:     node.PowerMode,
+			NetworkMode:   node.NetworkMode,
 			Models:        models,
 			MaxConcurrent: node.MaxConcurrent,
 			Active:        node.Active,
@@ -256,6 +303,10 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 	models := map[string]bool{}
 	cities := map[string]bool{}
 	privacyTiers := map[string]bool{}
+	backends := map[string]bool{}
+	deviceKinds := map[string]bool{}
+	accelerators := map[string]bool{}
+	socs := map[string]bool{}
 	status := NetworkStatus{Nodes: len(r.nodes)}
 	now := time.Now()
 	for _, node := range r.nodes {
@@ -279,8 +330,20 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 		if node.City != "" {
 			cities[node.City] = true
 		}
+		if node.Backend != "" {
+			backends[node.Backend] = true
+		}
+		if node.DeviceKind != "" {
+			deviceKinds[node.DeviceKind] = true
+		}
+		if node.SoC != "" {
+			socs[node.SoC] = true
+		}
 		for tier := range node.PrivacyTiers {
 			privacyTiers[tier] = true
+		}
+		for accelerator := range node.Accelerators {
+			accelerators[accelerator] = true
 		}
 	}
 	for model := range models {
@@ -292,9 +355,25 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 	for tier := range privacyTiers {
 		status.PrivacyTiers = append(status.PrivacyTiers, tier)
 	}
+	for backend := range backends {
+		status.Backends = append(status.Backends, backend)
+	}
+	for deviceKind := range deviceKinds {
+		status.DeviceKinds = append(status.DeviceKinds, deviceKind)
+	}
+	for accelerator := range accelerators {
+		status.Accelerators = append(status.Accelerators, accelerator)
+	}
+	for soc := range socs {
+		status.SoCs = append(status.SoCs, soc)
+	}
 	sort.Strings(status.Models)
 	sort.Strings(status.Cities)
 	sort.Strings(status.PrivacyTiers)
+	sort.Strings(status.Backends)
+	sort.Strings(status.DeviceKinds)
+	sort.Strings(status.Accelerators)
+	sort.Strings(status.SoCs)
 	return status
 }
 

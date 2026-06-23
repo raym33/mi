@@ -1,8 +1,8 @@
 # mi
 
-Local-first distributed inference for Apple Silicon fleets.
+Local-first distributed inference for Apple Silicon and future ARM edge fleets.
 
-`mi` turns a group of Macs into one OpenAI-compatible inference endpoint. It is designed for people, teams, coworking spaces, schools, small businesses, and city-scale communities that want strong local inference without sending every prompt to a centralized cloud API.
+`mi` turns a group of local machines into one OpenAI-compatible inference endpoint. It starts with Apple Silicon Macs, and the architecture is being shaped for future Android, Snapdragon, and Xiaomi edge nodes.
 
 The project is early, but the core control plane is already here: a coordinator, outbound node agents, OpenAI-compatible chat completions, model aliases, provider enrollment, quotas, usage accounting, TLS/mTLS, failover, cooldowns, and privacy tiers for rented compute.
 
@@ -21,8 +21,8 @@ It helps with:
 ## What It Does
 
 - Exposes `/v1/chat/completions` and `/v1/models`.
-- Lets each Mac connect outbound as a `node-agent`.
-- Serves local models through Ollama today, with room for MLX-native backends later.
+- Lets each provider machine connect outbound as a `node-agent`.
+- Serves local models through an inference backend abstraction. Ollama is supported today, with room for MLX, QNN, LiteRT, and Android runtimes later.
 - Routes by model availability, health, queue depth, capacity, cooldowns, and privacy tier.
 - Retries another node when a provider fails before the first streamed token.
 - Tracks usage for both consumers and providers.
@@ -39,8 +39,8 @@ flowchart LR
     C["OpenAI-compatible clients"] --> A["mi coordinator"]
     A --> S["scheduler"]
     S --> N1["Mac node-agent + Ollama"]
-    S --> N2["Mac node-agent + Ollama"]
-    S --> N3["Mac node-agent + Ollama"]
+    S --> N2["Mac node-agent + future MLX"]
+    S --> N3["Future Android/Xiaomi node + QNN/LiteRT"]
     A --> L["usage ledger"]
 ```
 
@@ -120,7 +120,7 @@ ACTION=rotate CONSUMER_ID=studio-b make city-enroll
 ACTION=disable PROVIDER_ID=neighbor-mac make city-enroll
 ```
 
-See [City Network](docs/city-network.md).
+See [City Network](docs/city-network.md) and [Android And Xiaomi Roadmap](docs/android-xiaomi.md).
 
 ## Renting Compute Privately
 

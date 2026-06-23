@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -100,10 +101,27 @@ type NodeAgent struct {
 	PrivacyTiers      []string        `yaml:"privacy_tiers"`
 	CoordinatorURL    string          `yaml:"coordinator_url"`
 	TLS               ClientTLSConfig `yaml:"tls"`
+	Backend           BackendConfig   `yaml:"backend"`
+	Hardware          HardwareConfig  `yaml:"hardware"`
 	OllamaURL         string          `yaml:"ollama_url"`
 	Models            []string        `yaml:"models"`
 	HeartbeatInterval Duration        `yaml:"heartbeat_interval"`
 	MaxConcurrent     int             `yaml:"max_concurrent"`
+}
+
+type BackendConfig struct {
+	Type string `yaml:"type"`
+	URL  string `yaml:"url"`
+}
+
+type HardwareConfig struct {
+	Kind         string   `yaml:"kind"`
+	Vendor       string   `yaml:"vendor"`
+	Model        string   `yaml:"model"`
+	SoC          string   `yaml:"soc"`
+	Accelerators []string `yaml:"accelerators"`
+	PowerMode    string   `yaml:"power_mode"`
+	NetworkMode  string   `yaml:"network_mode"`
 }
 
 type ClientTLSConfig struct {
@@ -148,8 +166,15 @@ func LoadNodeAgent(path string) (NodeAgent, error) {
 	if cfg.CoordinatorURL == "" {
 		cfg.CoordinatorURL = "ws://localhost:8080/ws/node"
 	}
+	if cfg.Backend.Type == "" {
+		cfg.Backend.Type = "ollama"
+	}
+	cfg.Backend.Type = strings.ToLower(cfg.Backend.Type)
 	if cfg.OllamaURL == "" {
 		cfg.OllamaURL = "http://localhost:11434"
+	}
+	if cfg.Backend.URL == "" && cfg.Backend.Type == "ollama" {
+		cfg.Backend.URL = cfg.OllamaURL
 	}
 	if cfg.HeartbeatInterval.Duration == 0 {
 		cfg.HeartbeatInterval = Duration{Duration: 5 * time.Second}

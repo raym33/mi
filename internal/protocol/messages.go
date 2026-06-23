@@ -24,6 +24,14 @@ type Register struct {
 	Hostname      string   `json:"hostname"`
 	Arch          string   `json:"arch"`
 	OS            string   `json:"os"`
+	Backend       string   `json:"backend,omitempty"`
+	DeviceKind    string   `json:"device_kind,omitempty"`
+	DeviceVendor  string   `json:"device_vendor,omitempty"`
+	DeviceModel   string   `json:"device_model,omitempty"`
+	SoC           string   `json:"soc,omitempty"`
+	Accelerators  []string `json:"accelerators,omitempty"`
+	PowerMode     string   `json:"power_mode,omitempty"`
+	NetworkMode   string   `json:"network_mode,omitempty"`
 	Models        []string `json:"models"`
 	MaxConcurrent int      `json:"max_concurrent"`
 }
