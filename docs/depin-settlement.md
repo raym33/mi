@@ -86,6 +86,25 @@ A healthy chain returns:
 }
 ```
 
+Inspect provider reputation:
+
+```bash
+curl http://localhost:8080/admin/reputation \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
+The first reputation model uses objective local signals:
+
+- active and healthy node count
+- cooldown status
+- recent node error streaks
+- completed settlement events
+- total served tokens
+- accrued provider rewards
+- disabled provider state
+
+This is intentionally off-chain and explainable. Later versions can add benchmarking, signed attestations, challenge jobs, staking, slashing, and public dashboards.
+
 ## Payment roadmap
 
 The current settlement layer is payment-ready accounting, not a payment processor.

@@ -24,6 +24,7 @@ import (
 	"github.com/raym33/mi/internal/openai"
 	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
+	"github.com/raym33/mi/internal/reputation"
 	"github.com/raym33/mi/internal/scheduler"
 	"github.com/raym33/mi/internal/settlement"
 	"github.com/raym33/mi/internal/wsutil"
@@ -79,6 +80,7 @@ func main() {
 	mux.HandleFunc("GET /admin/city", s.requireAdmin(s.adminCity))
 	mux.HandleFunc("GET /admin/settlement", s.requireAdmin(s.adminSettlement))
 	mux.HandleFunc("GET /admin/settlement/verify", s.requireAdmin(s.adminSettlementVerify))
+	mux.HandleFunc("GET /admin/reputation", s.requireAdmin(s.adminReputation))
 	mux.HandleFunc("POST /admin/consumers", s.requireAdmin(s.adminCreateConsumer))
 	mux.HandleFunc("POST /admin/consumers/{id}/rotate-key", s.requireAdmin(s.adminRotateConsumerKey))
 	mux.HandleFunc("DELETE /admin/consumers/{id}", s.requireAdmin(s.adminDisableConsumer))
@@ -180,6 +182,10 @@ func (s *server) adminSettlement(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) adminSettlementVerify(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.settlement.Verify())
+}
+
+func (s *server) adminReputation(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, reputation.Build(s.market.Snapshot(), s.registry.Snapshot(), s.settlement.Snapshot(0)))
 }
 
 func (s *server) adminCreateConsumer(w http.ResponseWriter, r *http.Request) {

@@ -195,6 +195,13 @@ curl http://localhost:8080/admin/settlement/verify \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
+Inspect provider reputation:
+
+```bash
+curl http://localhost:8080/admin/reputation \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
 The example config writes usage to `data/city-usage.json`. Keep that file backed up if it represents real credits.
 The example settlement chain writes to `data/settlement-chain.jsonl`. Back it up and periodically anchor its latest hash externally if rewards represent real money.
 Generated API keys and provider tokens are not stored in plaintext; only hashes are persisted.
