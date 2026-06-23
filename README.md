@@ -1,0 +1,58 @@
+# mi
+
+`mi` turns a local fleet of Apple Silicon Macs into one OpenAI-compatible inference endpoint.
+
+The first version is LAN-first and intentionally small:
+
+- A `coordinator` exposes `/v1/chat/completions` and `/v1/models`.
+- Each Mac runs a `node-agent` that connects outbound to the coordinator over WebSocket.
+- Nodes serve requests through Ollama today, with the backend boundary ready for MLX later.
+- The scheduler routes by model availability, health, queue depth, memory pressure, and measured latency.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    C["OpenAI-compatible clients"] --> A["mi coordinator"]
+    A --> S["scheduler"]
+    S --> N1["Mac node-agent + Ollama"]
+    S --> N2["Mac node-agent + Ollama"]
+    S --> N3["Mac node-agent + Ollama"]
+```
+
+## Quickstart
+
+Start Ollama on every Mac node and make sure the desired model exists:
+
+```bash
+ollama pull llama3.1:8b
+```
+
+Run the coordinator:
+
+```bash
+go run ./coordinator/cmd/coordinator -config configs/coordinator.yaml
+```
+
+Run a node agent on each Mac:
+
+```bash
+go run ./node-agent/cmd/node-agent -config configs/node-agent.yaml
+```
+
+Call the cluster:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "llama3.1:8b",
+    "messages": [{"role": "user", "content": "Say hello from the Mac fleet"}],
+    "stream": true
+  }'
+```
+
+## Status
+
+This is an MVP scaffold. It already includes the core control-plane shape, but the first production hardening pass should add TLS/mTLS, persistent node identities, stronger model management, dashboard auth, and MLX-native backends.
+

@@ -1,0 +1,7 @@
+node_id: ""
+coordinator_url: "ws://localhost:8080/ws/node"
+ollama_url: "http://localhost:11434"
+models:
+  - "llama3.1:8b"
+heartbeat_interval: "5s"
+max_concurrent: 1
