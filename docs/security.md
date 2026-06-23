@@ -96,3 +96,8 @@ For city mode, the intended stack is:
 - Provider tokens bind that node to a provider account and can be rotated or revoked.
 - Consumer API keys authorize OpenAI-compatible API access and enforce quotas.
 - Provider account privacy policies prevent private requests from being dispatched to public rented providers.
+- Settlement events are hash-chained so reward and debit records are tamper-evident.
+
+## Settlement integrity
+
+The local settlement chain detects changes to recorded events. It does not prevent the operator from deleting the entire file or choosing not to record a request. For real payouts, back up the chain and periodically publish the latest hash to an external system such as a public blockchain, timestamping service, or signed transparency log.

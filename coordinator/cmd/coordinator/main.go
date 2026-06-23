@@ -25,6 +25,7 @@ import (
 	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
 	"github.com/raym33/mi/internal/scheduler"
+	"github.com/raym33/mi/internal/settlement"
 	"github.com/raym33/mi/internal/wsutil"
 )
 
@@ -32,6 +33,7 @@ type server struct {
 	registry              *scheduler.Registry
 	market                *city.Market
 	modelCatalog          *modelcatalog.Catalog
+	settlement            *settlement.Ledger
 	adminToken            string
 	devAdminOpen          bool
 	requireNodeClientCert bool
@@ -51,10 +53,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	settlementLedger, err := settlement.New(cfg.Settlement)
+	if err != nil {
+		log.Fatal(err)
+	}
 	s := &server{
 		registry:              scheduler.NewRegistry(),
 		market:                market,
 		modelCatalog:          modelcatalog.New(cfg.Models),
+		settlement:            settlementLedger,
 		adminToken:            cfg.AdminToken,
 		devAdminOpen:          cfg.DevAdminOpen,
 		requireNodeClientCert: cfg.TLS.NodeClientCAFile != "",
@@ -70,6 +77,8 @@ func main() {
 	mux.HandleFunc("GET /ws/node", s.nodeWebSocket)
 	mux.HandleFunc("GET /admin/nodes", s.requireAdmin(s.adminNodes))
 	mux.HandleFunc("GET /admin/city", s.requireAdmin(s.adminCity))
+	mux.HandleFunc("GET /admin/settlement", s.requireAdmin(s.adminSettlement))
+	mux.HandleFunc("GET /admin/settlement/verify", s.requireAdmin(s.adminSettlementVerify))
 	mux.HandleFunc("POST /admin/consumers", s.requireAdmin(s.adminCreateConsumer))
 	mux.HandleFunc("POST /admin/consumers/{id}/rotate-key", s.requireAdmin(s.adminRotateConsumerKey))
 	mux.HandleFunc("DELETE /admin/consumers/{id}", s.requireAdmin(s.adminDisableConsumer))
@@ -162,6 +171,15 @@ func (s *server) adminNodes(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) adminCity(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.market.Snapshot())
+}
+
+func (s *server) adminSettlement(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	writeJSON(w, s.settlement.Snapshot(limit))
+}
+
+func (s *server) adminSettlementVerify(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, s.settlement.Verify())
 }
 
 func (s *server) adminCreateConsumer(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +327,17 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	if err := s.market.RecordReserved(reservation, consumerID, result.ProviderID, done); err != nil {
 		log.Printf("record usage: %v", err)
 	}
+	if _, err := s.settlement.Record(settlement.RecordInput{
+		RequestID:   requestID,
+		ConsumerID:  consumerID,
+		ProviderID:  result.ProviderID,
+		NodeID:      result.NodeID,
+		Model:       responseModel,
+		PrivacyTier: req.PrivacyTier,
+		Done:        done,
+	}); err != nil {
+		log.Printf("record settlement: %v", err)
+	}
 	finish := done.FinishReason
 	chunk := openai.ChatCompletionChunk{
 		ID:      requestID,
@@ -340,6 +369,17 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 	done := result.Done
 	if err := s.market.RecordReserved(reservation, consumerID, result.ProviderID, done); err != nil {
 		log.Printf("record usage: %v", err)
+	}
+	if _, err := s.settlement.Record(settlement.RecordInput{
+		RequestID:   requestID,
+		ConsumerID:  consumerID,
+		ProviderID:  result.ProviderID,
+		NodeID:      result.NodeID,
+		Model:       responseModel,
+		PrivacyTier: req.PrivacyTier,
+		Done:        done,
+	}); err != nil {
+		log.Printf("record settlement: %v", err)
 	}
 	writeJSON(w, openai.ChatCompletionResponse{
 		ID:      requestID,

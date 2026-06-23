@@ -28,6 +28,7 @@ It helps with:
 - Tracks usage for both consumers and providers.
 - Supports API keys, provider tokens, quota limits, dynamic enrollment, rotation, and revocation.
 - Reserves quota before dispatch so concurrent requests cannot spend the same budget twice.
+- Records optional hash-chained settlement events for consumer debits and provider rewards.
 - Supports HTTPS/WSS and node mTLS.
 - Enforces provider-side privacy policy so public rented nodes never receive private prompts.
 
@@ -140,6 +141,12 @@ privacy_mode: "public"
 Set the same policy on the provider account in the coordinator. The coordinator enforces the provider account policy, so a node cannot elevate itself from `public` to `private` by changing its local config.
 
 See [Renting Compute Privately](docs/rental-privacy.md).
+
+## Settlement And Rewards
+
+City deployments can enable a tamper-evident settlement chain. It records request metadata, token usage, consumer debits, provider rewards, and linked hashes without storing prompt bodies.
+
+See [DePIN Settlement And Rewards](docs/depin-settlement.md).
 
 ## Security
 

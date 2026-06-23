@@ -25,6 +25,11 @@ city:
       display_name: "Studio Node"
       token: "pk-mi-studio-node-dev"
       privacy_mode: "private"
+settlement:
+  enabled: true
+  chain_path: "data/settlement-chain.jsonl"
+  price_per_thousand_tokens_micros: 1000
+  provider_reward_share_bps: 7000
 models:
   aliases:
     - id: "fast"

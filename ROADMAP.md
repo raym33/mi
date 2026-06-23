@@ -11,6 +11,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - City accounts for consumers and providers.
 - API keys, provider tokens, quotas, rotation, and revocation.
 - Quota reservations for concurrent requests.
+- Hash-chained settlement events for consumer debits and provider rewards.
 - Persistent local usage ledger.
 - HTTPS/WSS and node mTLS.
 - Scheduler failover before first token.
@@ -22,6 +23,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Prometheus metrics for requests, tokens, nodes, errors, cooldowns, and provider usage.
 - Pricing rules per model, provider, and privacy tier.
 - Provider payout reports and invoice exports.
+- Optional on-chain anchoring of settlement hashes.
 - Provider reputation based on uptime, error rate, latency, and completed tokens.
 - One-command provider enrollment.
 - macOS LaunchAgent installer for always-on nodes.

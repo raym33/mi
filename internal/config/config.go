@@ -8,14 +8,15 @@ import (
 )
 
 type Coordinator struct {
-	ListenAddr   string          `yaml:"listen_addr"`
-	APIKeys      []string        `yaml:"api_keys"`
-	AdminToken   string          `yaml:"admin_token"`
-	DevAdminOpen bool            `yaml:"dev_admin_open"`
-	TLS          ServerTLSConfig `yaml:"tls"`
-	City         CityConfig      `yaml:"city"`
-	Models       ModelConfig     `yaml:"models"`
-	Scheduler    SchedulerConfig `yaml:"scheduler"`
+	ListenAddr   string           `yaml:"listen_addr"`
+	APIKeys      []string         `yaml:"api_keys"`
+	AdminToken   string           `yaml:"admin_token"`
+	DevAdminOpen bool             `yaml:"dev_admin_open"`
+	TLS          ServerTLSConfig  `yaml:"tls"`
+	City         CityConfig       `yaml:"city"`
+	Settlement   SettlementConfig `yaml:"settlement"`
+	Models       ModelConfig      `yaml:"models"`
+	Scheduler    SchedulerConfig  `yaml:"scheduler"`
 }
 
 type ServerTLSConfig struct {
@@ -46,6 +47,13 @@ type ProviderAccount struct {
 	Token        string   `yaml:"token"`
 	PrivacyMode  string   `yaml:"privacy_mode"`
 	PrivacyTiers []string `yaml:"privacy_tiers"`
+}
+
+type SettlementConfig struct {
+	Enabled                      bool   `yaml:"enabled"`
+	ChainPath                    string `yaml:"chain_path"`
+	PricePerThousandTokensMicros int64  `yaml:"price_per_thousand_tokens_micros"`
+	ProviderRewardShareBPS       int64  `yaml:"provider_reward_share_bps"`
 }
 
 type ModelConfig struct {

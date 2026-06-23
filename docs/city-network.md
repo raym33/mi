@@ -10,6 +10,7 @@ It introduces four primitives:
 - Usage accounting: requests and tokens are counted for both the consumer and the provider.
 - Consumer quotas: each API key can belong to an account with a token limit.
 - Quota reservations: estimated request budget is reserved before dispatch, then reconciled with actual usage when the request finishes.
+- Settlement chain: successful inference can create tamper-evident debit and reward events.
 - Persistent local usage: usage survives coordinator restarts when `usage_store_path` is configured.
 - Privacy tiers: private prompts stay on trusted nodes, while public prompts can use rented provider capacity.
 
@@ -184,7 +185,18 @@ curl http://localhost:8080/admin/city \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
+Inspect settlement rewards and verify the hash chain:
+
+```bash
+curl http://localhost:8080/admin/settlement \
+  -H 'Authorization: Bearer admin-dev-token'
+
+curl http://localhost:8080/admin/settlement/verify \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
 The example config writes usage to `data/city-usage.json`. Keep that file backed up if it represents real credits.
+The example settlement chain writes to `data/settlement-chain.jsonl`. Back it up and periodically anchor its latest hash externally if rewards represent real money.
 Generated API keys and provider tokens are not stored in plaintext; only hashes are persisted.
 
 Consumers can inspect their own account and remaining quota:
@@ -218,6 +230,7 @@ make city-smoke
 - Shared inference for small businesses without sending prompts to a cloud API.
 - Internal credits or payouts later, based on measured provider token contribution.
 - Public rented capacity for non-sensitive work, with private work pinned to trusted nodes.
+- Tamper-evident settlement logs for later payouts, invoices, or on-chain anchoring.
 - Public endpoint on a city VPN, Tailscale network, or reverse proxy.
 - Fair usage limits for schools, coworking spaces, and local AI clubs.
 - Automatic failover before the first token when a provider node fails to start a request.

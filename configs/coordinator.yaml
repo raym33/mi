@@ -13,6 +13,11 @@ city:
   usage_store_path: ""
   consumers: []
   providers: []
+settlement:
+  enabled: false
+  chain_path: ""
+  price_per_thousand_tokens_micros: 0
+  provider_reward_share_bps: 0
 models:
   aliases:
     - id: "fast"
