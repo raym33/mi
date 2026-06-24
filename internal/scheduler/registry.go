@@ -23,6 +23,7 @@ const (
 
 type NodeConn interface {
 	SendInference(ctx context.Context, requestID string, req protocol.InferRequest, sink StreamSink) (protocol.InferDone, error)
+	SendEmbedding(ctx context.Context, requestID string, req protocol.EmbedRequest) (protocol.EmbedResult, error)
 	Close() error
 }
 
@@ -151,6 +152,13 @@ type DispatchResult struct {
 	TTFTMs          int64
 	OutputTokens    int
 	TokensPerSecond float64
+}
+
+type EmbedDispatchResult struct {
+	Result     protocol.EmbedResult
+	NodeID     string
+	ProviderID string
+	Attempts   int
 }
 
 type RetryableError interface {
@@ -473,6 +481,38 @@ func (r *Registry) DispatchToProvider(ctx context.Context, requestID string, pro
 	return r.dispatch(ctx, requestID, req, sink, providerID)
 }
 
+func (r *Registry) DispatchEmbedding(ctx context.Context, requestID string, req protocol.EmbedRequest) (EmbedDispatchResult, error) {
+	attempted := map[string]bool{}
+	var lastErr error
+	attempts := 0
+	filter := protocol.InferRequest{Model: req.Model, PrivacyTier: req.PrivacyTier}
+	for {
+		node, err := r.reserveFiltered(filter, attempted, "")
+		if err != nil {
+			if lastErr != nil {
+				return EmbedDispatchResult{Attempts: attempts}, fmt.Errorf("%w after %d failed attempt(s): %v", ErrNoNode, attempts, lastErr)
+			}
+			return EmbedDispatchResult{Attempts: attempts}, err
+		}
+		attempts++
+		startedAt := time.Now()
+		result, err := node.Conn.SendEmbedding(ctx, requestID, req)
+		observation := dispatchObservation{Latency: time.Since(startedAt)}
+		r.release(node.ID)
+		if err == nil {
+			r.recordSuccess(node.ID, observation)
+			return embedDispatchResult(node, result, attempts), nil
+		}
+		if !canRetry(ctx, err) {
+			r.recordPreTokenTerminalFailure(node.ID, err, observation)
+			return embedDispatchResult(node, protocol.EmbedResult{}, attempts), err
+		}
+		r.recordPreTokenFailure(node.ID, err, observation)
+		attempted[node.ID] = true
+		lastErr = err
+	}
+}
+
 func (r *Registry) dispatch(ctx context.Context, requestID string, req protocol.InferRequest, sink StreamSink, providerID string) (DispatchResult, error) {
 	attempted := map[string]bool{}
 	var lastErr error
@@ -538,6 +578,15 @@ func (r *Registry) reserveFiltered(req protocol.InferRequest, exclude map[string
 	selected := candidates[0]
 	selected.Active++
 	return selected, nil
+}
+
+func embedDispatchResult(node *Node, result protocol.EmbedResult, attempts int) EmbedDispatchResult {
+	return EmbedDispatchResult{
+		Result:     result,
+		NodeID:     node.ID,
+		ProviderID: node.ProviderID,
+		Attempts:   attempts,
+	}
 }
 
 func nodeDispatchResult(node *Node, done protocol.InferDone, attempts int, observation dispatchObservation) DispatchResult {

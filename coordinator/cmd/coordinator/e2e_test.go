@@ -55,6 +55,7 @@ func newE2EServer(t *testing.T, adminToken string) (*server, *httptest.Server) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws/node", s.nodeWebSocket)
 	mux.HandleFunc("POST /v1/chat/completions", s.requireConsumerQuota(s.chatCompletions))
+	mux.HandleFunc("POST /v1/embeddings", s.requireConsumerQuota(s.embeddings))
 	mux.HandleFunc("GET /admin/metrics", s.requireAdmin(s.adminMetrics))
 	mux.HandleFunc("GET /admin/payouts.csv", s.requireAdmin(s.adminPayoutsCSV))
 	ts := httptest.NewServer(mux)
@@ -96,6 +97,21 @@ func dialE2ENode(t *testing.T, ctx context.Context, ts *httptest.Server, nodeID,
 			if err != nil {
 				return
 			}
+			if msg.Type == "embed" && msg.Embed != nil {
+				go func(requestID string, input []string) {
+					vectors := make([][]float32, 0, len(input))
+					for i, text := range input {
+						vectors = append(vectors, []float32{float32(i + 1), float32(len(text))})
+					}
+					write(protocol.Envelope{
+						Version:    protocol.Version,
+						Type:       "embeddings",
+						RequestID:  requestID,
+						Embeddings: &protocol.EmbedResult{Vectors: vectors, PromptTokens: 999999},
+					})
+				}(msg.RequestID, append([]string(nil), msg.Embed.Input...))
+				continue
+			}
 			if msg.Type != "infer" || msg.Infer == nil {
 				continue
 			}
@@ -120,6 +136,24 @@ func dialE2ENode(t *testing.T, ctx context.Context, ts *httptest.Server, nodeID,
 	return conn
 }
 
+func e2eEmbedding(t *testing.T, ts *httptest.Server, body string) openai.EmbeddingResponse {
+	t.Helper()
+	resp, err := http.Post(ts.URL+"/v1/embeddings", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("embedding request: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("embedding status = %d, want 200: %s", resp.StatusCode, raw)
+	}
+	var embedding openai.EmbeddingResponse
+	if err := json.Unmarshal(raw, &embedding); err != nil {
+		t.Fatalf("decode embedding: %v: %s", err, raw)
+	}
+	return embedding
+}
+
 func e2eChat(t *testing.T, ts *httptest.Server, model string) openai.ChatCompletionResponse {
 	t.Helper()
 	body := `{"model":"` + model + `","privacy_tier":"private","messages":[{"role":"user","content":"hi"}],"stream":false}`
@@ -137,6 +171,51 @@ func e2eChat(t *testing.T, ts *httptest.Server, model string) openai.ChatComplet
 		t.Fatalf("decode completion: %v: %s", err, raw)
 	}
 	return completion
+}
+
+func TestEndToEndEmbeddingsOverWebSocket(t *testing.T) {
+	s, ts := newE2EServer(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn := dialE2ENode(t, ctx, ts, "embed-node", "embed-provider", "embed-model", "unused", 1, "private")
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	waitFor(t, 5*time.Second, func() bool { return hasModel(s, "embed-model") })
+
+	response := e2eEmbedding(t, ts, `{"model":"embed-model","privacy_tier":"private","input":["alpha","beta"]}`)
+	if response.Object != "list" {
+		t.Fatalf("object = %q, want list", response.Object)
+	}
+	if len(response.Data) != 2 {
+		t.Fatalf("data items = %d, want 2", len(response.Data))
+	}
+	for i, item := range response.Data {
+		if item.Object != "embedding" || item.Index != i || len(item.Embedding) == 0 {
+			t.Fatalf("embedding item %d = %+v, want non-empty embedding", i, item)
+		}
+	}
+	if response.Usage.PromptTokens <= 0 || response.Usage.CompletionTokens != 0 || response.Usage.TotalTokens != response.Usage.PromptTokens {
+		t.Fatalf("usage = %+v, want coordinator prompt tokens only", response.Usage)
+	}
+	waitFor(t, 5*time.Second, func() bool { return s.settlement.Snapshot(10).Events == 1 })
+	if got := s.settlement.Snapshot(10).Events; got != 1 {
+		t.Fatalf("settlement events = %d, want 1", got)
+	}
+}
+
+func TestEndToEndEmbeddingsAcceptPlainString(t *testing.T) {
+	s, ts := newE2EServer(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	conn := dialE2ENode(t, ctx, ts, "embed-string-node", "embed-string-provider", "embed-string-model", "unused", 1, "private")
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	waitFor(t, 5*time.Second, func() bool { return hasModel(s, "embed-string-model") })
+
+	response := e2eEmbedding(t, ts, `{"model":"embed-string-model","privacy_tier":"private","input":"solo"}`)
+	if response.Object != "list" || len(response.Data) != 1 || len(response.Data[0].Embedding) == 0 {
+		t.Fatalf("response = %+v, want one embedding", response)
+	}
 }
 
 // TestEndToEndChatOverWebSocket exercises the full path through the real HTTP

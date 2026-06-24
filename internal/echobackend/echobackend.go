@@ -5,6 +5,7 @@ package echobackend
 
 import (
 	"context"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -46,6 +47,45 @@ func (b *Backend) Chat(ctx context.Context, req protocol.InferRequest, onChunk f
 		PromptTokens: estimateTokens(promptChars),
 		OutputTokens: estimateTokens(utf8.RuneCountInString(reply)),
 	}, nil
+}
+
+func (b *Backend) Embed(ctx context.Context, model string, input []string) (protocol.EmbedResult, error) {
+	if err := ctx.Err(); err != nil {
+		return protocol.EmbedResult{}, err
+	}
+
+	vectors := make([][]float32, 0, len(input))
+	promptChars := 0
+	for _, text := range input {
+		if err := ctx.Err(); err != nil {
+			return protocol.EmbedResult{}, err
+		}
+		promptChars += utf8.RuneCountInString(text)
+		vectors = append(vectors, embedString(text))
+	}
+	return protocol.EmbedResult{
+		Vectors:      vectors,
+		PromptTokens: estimateTokens(promptChars),
+	}, nil
+}
+
+func embedString(text string) []float32 {
+	vector := make([]float32, 8)
+	for i, r := range text {
+		vector[i%len(vector)] += float32(r) + 1
+	}
+	var sumSquares float64
+	for _, value := range vector {
+		sumSquares += float64(value * value)
+	}
+	if sumSquares == 0 {
+		return vector
+	}
+	norm := float32(math.Sqrt(sumSquares))
+	for i := range vector {
+		vector[i] /= norm
+	}
+	return vector
 }
 
 func lastUserMessage(req protocol.InferRequest) string {

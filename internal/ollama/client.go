@@ -42,6 +42,16 @@ type chatResponse struct {
 	EvalCount       int    `json:"eval_count"`
 }
 
+type embedRequest struct {
+	Model string   `json:"model"`
+	Input []string `json:"input"`
+}
+
+type embedResponse struct {
+	Embeddings      [][]float32 `json:"embeddings"`
+	PromptEvalCount int         `json:"prompt_eval_count"`
+}
+
 func (c *Client) Chat(ctx context.Context, req protocol.InferRequest, onChunk func(string) error) (protocol.InferDone, error) {
 	options := map[string]any{}
 	if req.Temperature != nil {
@@ -100,4 +110,36 @@ func (c *Client) Chat(ctx context.Context, req protocol.InferRequest, onChunk fu
 		}
 	}
 	return done, scanner.Err()
+}
+
+func (c *Client) Embed(ctx context.Context, model string, input []string) (protocol.EmbedResult, error) {
+	body, err := json.Marshal(embedRequest{
+		Model: model,
+		Input: input,
+	})
+	if err != nil {
+		return protocol.EmbedResult{}, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/embed", bytes.NewReader(body))
+	if err != nil {
+		return protocol.EmbedResult{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return protocol.EmbedResult{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return protocol.EmbedResult{}, fmt.Errorf("ollama returned %s", resp.Status)
+	}
+
+	var decoded embedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return protocol.EmbedResult{}, err
+	}
+	return protocol.EmbedResult{Vectors: decoded.Embeddings, PromptTokens: decoded.PromptEvalCount}, nil
 }

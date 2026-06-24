@@ -339,6 +339,7 @@ The TLS city example also enables node mTLS for `/ws/node`.
 ## Documentation
 
 - [Production Deployment Runbook](docs/deployment.md): step-by-step instructions to run `mi` in production (coordinator + nodes, Tailscale/TLS, systemd/launchd, accounts, backups, monitoring).
+- [Embeddings](docs/embeddings.md): OpenAI-compatible `/v1/embeddings` requests, responses, routing, quotas, and backends.
 - [City Network Mode](docs/city-network.md): accounts, provider join flow, quotas, usage, privacy tiers, and admin operations.
 - [Usage Accounting And Reputation](docs/depin-settlement.md): optional tamper-evident usage log, hash chains, reputation, challenges, and anchoring (cooperative accounting, not payments).
 - [Metrics](docs/metrics.md): Prometheus-style admin metrics for coordinator operations.

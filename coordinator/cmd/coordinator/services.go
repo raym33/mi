@@ -31,6 +31,7 @@ type nodeRegistry interface {
 	NetworkStatus() scheduler.NetworkStatus
 	SetProviderScores(scores map[string]int)
 	Dispatch(ctx context.Context, requestID string, req protocol.InferRequest, sink scheduler.StreamSink) (scheduler.DispatchResult, error)
+	DispatchEmbedding(ctx context.Context, requestID string, req protocol.EmbedRequest) (scheduler.EmbedDispatchResult, error)
 	DispatchToProvider(ctx context.Context, requestID string, providerID string, req protocol.InferRequest, sink scheduler.StreamSink) (scheduler.DispatchResult, error)
 }
 
