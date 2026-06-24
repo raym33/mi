@@ -105,4 +105,4 @@ The local settlement chain detects changes to recorded events. It does not preve
 
 Use `GET /admin/integrity` to export a combined settlement and benchmark challenge manifest. Its `anchor_hash` is the recommended value to publish externally because it binds both usage/reward accounting and provider challenge evidence.
 
-The current token accounting estimate reduces worker fraud but is not a cryptographic proof of inference. Real-money deployments should add model-specific tokenizers, signed receipts, dispute windows, and external anchoring.
+The current rune-count token estimate reduces worker fraud but is not exact tokenization or a cryptographic proof of inference. Real-money deployments should add model-specific tokenizers, signed receipts, dispute windows, and external anchoring.

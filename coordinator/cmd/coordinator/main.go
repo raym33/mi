@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 	"github.com/raym33/mi/internal/challenge"
@@ -49,6 +50,7 @@ type server struct {
 }
 
 const defaultReservedOutputTokens = 1024
+const defaultReputationRefreshInterval = 30 * time.Second
 
 func main() {
 	configPath := flag.String("config", "configs/coordinator.yaml", "path to coordinator config")
@@ -107,6 +109,7 @@ func main() {
 	mux.HandleFunc("DELETE /admin/providers/{id}", s.requireAdmin(s.adminDisableProvider))
 
 	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
+	s.startReputationRefresher(defaultReputationRefreshInterval)
 	s.startChallengeRunner(cfg.Challenges)
 	log.Fatal(serveHTTP(cfg, mux))
 }
@@ -214,6 +217,20 @@ func (s *server) refreshSchedulerReputation() {
 		return
 	}
 	s.applyProviderScores(s.reputationReport())
+}
+
+func (s *server) startReputationRefresher(interval time.Duration) {
+	if interval <= 0 {
+		interval = defaultReputationRefreshInterval
+	}
+	s.refreshSchedulerReputation()
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.refreshSchedulerReputation()
+		}
+	}()
 }
 
 func (s *server) reputationReport() reputation.Report {
@@ -395,7 +412,6 @@ func (s *server) startChallengeRunner(cfg config.ChallengeConfig) {
 }
 
 func (s *server) runSyntheticChallenge(ctx context.Context, cfg config.ChallengeConfig) (challenge.Event, error) {
-	s.refreshSchedulerReputation()
 	model := cfg.Model
 	if model == "" {
 		models := s.registry.Models()
@@ -413,7 +429,7 @@ func (s *server) runSyntheticChallenge(ctx context.Context, cfg config.Challenge
 	}
 	prompt := cfg.Prompt
 	if prompt == "" {
-		prompt = "Reply with a short health-check token."
+		prompt = "Answer briefly."
 	}
 	maxTokens := cfg.MaxTokens
 	if maxTokens <= 0 {
@@ -429,7 +445,7 @@ func (s *server) runSyntheticChallenge(ctx context.Context, cfg config.Challenge
 		PrivacyTier: privacyTier,
 		MaxTokens:   &maxTokens,
 		Messages: []protocol.ProtocolMessage{
-			{Role: "system", Content: "You are responding to a synthetic availability benchmark. Do not include private data."},
+			{Role: "system", Content: "You are a concise assistant."},
 			{Role: "user", Content: prompt},
 		},
 	}
@@ -623,6 +639,7 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	for _, msg := range req.Messages {
 		inferReq.Messages = append(inferReq.Messages, protocol.ProtocolMessage{Role: msg.Role, Content: msg.Content})
 	}
+	applyDefaultMaxTokens(&inferReq)
 	reservation, err := s.market.ReserveConsumerQuota(consumerID(r.Context()), estimateTokenBudget(req))
 	if err != nil {
 		writeJSONStatus(w, http.StatusPaymentRequired, map[string]any{
@@ -632,10 +649,6 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 		return
-	}
-	if reservation != nil && inferReq.MaxTokens == nil {
-		defaultMaxTokens := defaultReservedOutputTokens
-		inferReq.MaxTokens = &defaultMaxTokens
 	}
 
 	if req.Stream {
@@ -661,7 +674,6 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 
 	sink := sseSink{w: w, flusher: flusher, requestID: requestID, model: responseModel}
 	metered := &meteredSink{inner: &sink}
-	s.refreshSchedulerReputation()
 	startedAt := time.Now()
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, metered)
 	latency := time.Since(startedAt)
@@ -707,7 +719,6 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 	metered := &meteredSink{inner: sink}
 	w.Header().Set("X-Mi-Privacy-Tier", req.PrivacyTier)
 	w.Header().Set("X-Mi-Usage-Source", "coordinator_estimate")
-	s.refreshSchedulerReputation()
 	startedAt := time.Now()
 	result, err := s.registry.Dispatch(r.Context(), requestID, req, metered)
 	latency := time.Since(startedAt)
@@ -940,7 +951,7 @@ type meteredSink struct {
 }
 
 func (s *meteredSink) Chunk(content string) error {
-	s.outputChars += len(content)
+	s.outputChars += utf8.RuneCountInString(content)
 	return s.inner.Chunk(content)
 }
 
@@ -1061,7 +1072,7 @@ func coordinatorMeasuredDone(req protocol.InferRequest, reported protocol.InferD
 func estimateProtocolPromptTokens(req protocol.InferRequest) int {
 	chars := 0
 	for _, msg := range req.Messages {
-		chars += len(msg.Role) + len(msg.Content)
+		chars += utf8.RuneCountInString(msg.Role) + utf8.RuneCountInString(msg.Content)
 	}
 	return estimateTokensFromChars(chars)
 }
@@ -1076,7 +1087,7 @@ func estimateTokensFromChars(chars int) int {
 func estimateTokenBudget(req openai.ChatCompletionRequest) int64 {
 	chars := 0
 	for _, msg := range req.Messages {
-		chars += len(msg.Role) + len(msg.Content)
+		chars += utf8.RuneCountInString(msg.Role) + utf8.RuneCountInString(msg.Content)
 	}
 	promptEstimate := int64(estimateTokensFromChars(chars))
 	outputEstimate := int64(defaultReservedOutputTokens)
@@ -1084,6 +1095,14 @@ func estimateTokenBudget(req openai.ChatCompletionRequest) int64 {
 		outputEstimate = int64(*req.MaxTokens)
 	}
 	return promptEstimate + outputEstimate
+}
+
+func applyDefaultMaxTokens(req *protocol.InferRequest) {
+	if req.MaxTokens != nil && *req.MaxTokens > 0 {
+		return
+	}
+	defaultMaxTokens := defaultReservedOutputTokens
+	req.MaxTokens = &defaultMaxTokens
 }
 
 func declareDispatchTrailers(w http.ResponseWriter) {

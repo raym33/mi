@@ -281,6 +281,82 @@ func TestChatUsesCoordinatorMeasuredUsage(t *testing.T) {
 	}
 }
 
+func TestChatUsesRuneMeasuredUsage(t *testing.T) {
+	market, err := city.New(config.CityConfig{
+		Enabled: true,
+		Consumers: []config.ConsumerAccount{{
+			ID:      "studio",
+			APIKeys: []string{"sk-test"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	settlements, err := settlement.New(config.SettlementConfig{})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"llama3.1:8b"}, PrivacyMode: "private"}, maliciousUsageNodeConn{
+		content: "你好🙂",
+		done:    protocol.InferDone{FinishReason: "stop", PromptTokens: 500000, OutputTokens: 500000},
+	})
+	s := &server{registry: registry, market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), settlement: settlements}
+	handler := s.requireConsumerQuota(s.chatCompletions)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{
+		"model": "llama3.1:8b",
+		"messages": [{"role": "user", "content": "hola"}]
+	}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var response openai.ChatCompletionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v: %s", err, rec.Body.String())
+	}
+	if response.Usage.PromptTokens != 2 || response.Usage.CompletionTokens != 1 || response.Usage.TotalTokens != 3 {
+		t.Fatalf("usage = %+v, want rune-estimated 2/1/3", response.Usage)
+	}
+}
+
+func TestChatAppliesDefaultMaxTokensWithoutQuota(t *testing.T) {
+	market, err := city.New(config.CityConfig{}, []string{"sk-test"})
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	settlements, err := settlement.New(config.SettlementConfig{})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	conn := &captureRequestConn{content: "ok"}
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"llama3.1:8b"}, PrivacyMode: "private"}, conn)
+	s := &server{registry: registry, market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), settlement: settlements}
+	handler := s.requireConsumerQuota(s.chatCompletions)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{
+		"model": "llama3.1:8b",
+		"messages": [{"role": "user", "content": "hello"}]
+	}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if conn.req.MaxTokens == nil || *conn.req.MaxTokens != defaultReservedOutputTokens {
+		t.Fatalf("max_tokens sent to node = %v, want default cap %d", conn.req.MaxTokens, defaultReservedOutputTokens)
+	}
+}
+
 func TestChatRoutesAroundLowReputationProvider(t *testing.T) {
 	market, err := city.New(config.CityConfig{
 		Enabled: true,
@@ -313,6 +389,7 @@ func TestChatRoutesAroundLowReputationProvider(t *testing.T) {
 	registry.Register(protocol.Register{NodeID: "node-shaky", ProviderID: "provider-shaky", Models: []string{"llama3.1:8b"}}, shaky)
 	registry.Register(protocol.Register{NodeID: "node-trusted", ProviderID: "provider-trusted", Models: []string{"llama3.1:8b"}}, trusted)
 	s := &server{registry: registry, market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), settlement: settlements, challenges: challenges}
+	s.refreshSchedulerReputation()
 	handler := s.requireConsumerQuota(s.chatCompletions)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{
 		"model": "llama3.1:8b",
@@ -396,6 +473,27 @@ func TestSyntheticChallengeUsesOpaqueRequestID(t *testing.T) {
 	}
 	if !strings.HasPrefix(conn.requestID, "chatcmpl-") {
 		t.Fatalf("challenge request id = %q, want normal chat-shaped id", conn.requestID)
+	}
+}
+
+func TestSyntheticChallengePromptDoesNotExposeBenchmark(t *testing.T) {
+	challenges, err := challenge.New(config.ChallengeConfig{Enabled: true})
+	if err != nil {
+		t.Fatalf("new challenges: %v", err)
+	}
+	conn := &recordRequestIDConn{content: "mi-ok"}
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"llama3.1:8b"}, PrivacyMode: "public"}, conn)
+	s := &server{registry: registry, challenges: challenges}
+
+	if _, err := s.runSyntheticChallenge(context.Background(), config.ChallengeConfig{Model: "llama3.1:8b", ExpectedContains: "mi-ok"}); err != nil {
+		t.Fatalf("run challenge: %v", err)
+	}
+	joined := strings.ToLower(conn.req.Messages[0].Content + "\n" + conn.req.Messages[1].Content)
+	for _, marker := range []string{"synthetic", "benchmark", "challenge"} {
+		if strings.Contains(joined, marker) {
+			t.Fatalf("challenge prompt leaked marker %q in %q", marker, joined)
+		}
 	}
 }
 
@@ -522,13 +620,34 @@ func (c maliciousUsageNodeConn) Close() error {
 	return nil
 }
 
+type captureRequestConn struct {
+	content string
+	req     protocol.InferRequest
+}
+
+func (c *captureRequestConn) SendInference(_ context.Context, _ string, req protocol.InferRequest, sink scheduler.StreamSink) (protocol.InferDone, error) {
+	c.req = req
+	if c.content != "" {
+		if err := sink.Chunk(c.content); err != nil {
+			return protocol.InferDone{}, err
+		}
+	}
+	return protocol.InferDone{FinishReason: "stop", PromptTokens: 1, OutputTokens: 1}, nil
+}
+
+func (c *captureRequestConn) Close() error {
+	return nil
+}
+
 type recordRequestIDConn struct {
 	requestID string
 	content   string
+	req       protocol.InferRequest
 }
 
-func (c *recordRequestIDConn) SendInference(_ context.Context, requestID string, _ protocol.InferRequest, sink scheduler.StreamSink) (protocol.InferDone, error) {
+func (c *recordRequestIDConn) SendInference(_ context.Context, requestID string, req protocol.InferRequest, sink scheduler.StreamSink) (protocol.InferDone, error) {
 	c.requestID = requestID
+	c.req = req
 	if c.content != "" {
 		if err := sink.Chunk(c.content); err != nil {
 			return protocol.InferDone{}, err

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
@@ -628,7 +629,6 @@ func (r *Registry) recordPreTokenFailure(nodeID string, err error, observation d
 	node.CooldownUntil = time.Now().Add(cooldown)
 	node.LastError = err.Error()
 	node.LastFailureAt = time.Now()
-	node.recordObservation(observation)
 }
 
 func (r *Registry) recordPostTokenFailure(nodeID string, err error, observation dispatchObservation) {
@@ -642,7 +642,6 @@ func (r *Registry) recordPostTokenFailure(nodeID string, err error, observation 
 	node.PostTokenFailures++
 	node.LastError = err.Error()
 	node.LastFailureAt = time.Now()
-	node.recordObservation(observation)
 }
 
 func (r *Registry) recordPreTokenTerminalFailure(nodeID string, err error, observation dispatchObservation) {
@@ -656,7 +655,6 @@ func (r *Registry) recordPreTokenTerminalFailure(nodeID string, err error, obser
 	node.PreTokenFailures++
 	node.LastError = err.Error()
 	node.LastFailureAt = time.Now()
-	node.recordObservation(observation)
 }
 
 func (n *Node) healthy() bool {
@@ -687,6 +685,10 @@ func (r *Registry) nodeCostLocked(n *Node) float64 {
 	loadPenalty := n.LoadAverage
 	errorPenalty := float64(n.ErrorStreak) * 8
 	reputationPenalty := float64(100-r.providerScoreLocked(n.ProviderID)) / 5
+	coldStartPenalty := 0.0
+	if n.CompletedRequests == 0 {
+		coldStartPenalty = 8
+	}
 	latencyPenalty := minFloat(n.ObservedLatencyMS/1000, 20)
 	ttftPenalty := minFloat(n.ObservedTTFTMS/500, 10)
 	throughputPenalty := 0.0
@@ -694,7 +696,7 @@ func (r *Registry) nodeCostLocked(n *Node) float64 {
 		throughputPenalty = maxFloat(0, 10-minFloat(n.ObservedTokensPerSecond, 10))
 	}
 	failurePenalty := float64(n.failureRateBPS()) / 10000 * 20
-	return utilization*20 + queuePenalty + loadPenalty + errorPenalty + reputationPenalty + latencyPenalty + ttftPenalty + throughputPenalty + failurePenalty
+	return utilization*20 + queuePenalty + loadPenalty + errorPenalty + reputationPenalty + coldStartPenalty + latencyPenalty + ttftPenalty + throughputPenalty + failurePenalty
 }
 
 func (r *Registry) providerScoreLocked(providerID string) int {
@@ -749,7 +751,7 @@ func (s *firstChunkTracker) Chunk(content string) error {
 		s.sent = true
 		s.firstChunkAt = time.Now()
 	}
-	s.outputChars += len(content)
+	s.outputChars += utf8.RuneCountInString(content)
 	return s.inner.Chunk(content)
 }
 

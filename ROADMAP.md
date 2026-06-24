@@ -14,10 +14,12 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Hash-chained settlement events for consumer debits and provider rewards.
 - Provider reputation from node health, cooldowns, completed events, tokens, and rewards.
 - Reputation-aware provider routing.
+- Background reputation refresh outside the request hot path.
 - Coordinator-observed latency, TTFT, tokens/sec, and failure-rate routing signals.
 - Tamper-evident benchmark challenge events feeding provider reputation.
 - Optional synthetic benchmark runner for automatic provider evidence.
 - Coordinator-estimated usage accounting instead of worker-reported token billing.
+- Default output caps for requests that omit `max_tokens`.
 - Per-provider challenge rotation so quiet nodes are tested regularly.
 - Combined settlement and challenge integrity manifest for external anchoring.
 - Persistent local usage ledger.

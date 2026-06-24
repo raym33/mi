@@ -234,6 +234,48 @@ func TestObservedPerformanceInfluencesDispatch(t *testing.T) {
 	}
 }
 
+func TestFailuresDoNotImproveObservedLatency(t *testing.T) {
+	registry := NewRegistry()
+	conn := &scriptedConn{err: nonRetryableTestError{}}
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"m"}}, conn)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-a", Models: []string{"m"}})
+	registry.recordSuccess("node-a", dispatchObservation{Latency: 5 * time.Second, TTFT: 3 * time.Second, OutputTokens: 10, TokensPerSecond: 2})
+
+	if _, err := registry.Dispatch(context.Background(), "req", protocol.InferRequest{Model: "m"}, &collectTestSink{}); err == nil {
+		t.Fatal("dispatch should fail")
+	}
+	node := registry.Snapshot()[0]
+	if node.ObservedLatencyMs != 5000 || node.ObservedTTFTMs != 3000 {
+		t.Fatalf("observed metrics after failure = latency %d ttft %d, want unchanged 5000/3000", node.ObservedLatencyMs, node.ObservedTTFTMs)
+	}
+	if node.FailedRequests != 1 || node.PreTokenFailures != 1 {
+		t.Fatalf("failure counters = %+v, want one pre-token failure", node)
+	}
+}
+
+func TestColdStartPenaltyAvoidsFreshNodeMonopoly(t *testing.T) {
+	registry := NewRegistry()
+	fresh := &scriptedConn{chunk: "fresh", done: protocol.InferDone{FinishReason: "stop"}}
+	proven := &scriptedConn{chunk: "proven", done: protocol.InferDone{FinishReason: "stop"}}
+	registry.Register(protocol.Register{NodeID: "node-fresh", ProviderID: "provider-fresh", Models: []string{"m"}}, fresh)
+	registry.Register(protocol.Register{NodeID: "node-proven", ProviderID: "provider-proven", Models: []string{"m"}}, proven)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-fresh", Models: []string{"m"}, LoadAverage: 0})
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-proven", Models: []string{"m"}, LoadAverage: 5})
+	registry.recordSuccess("node-proven", dispatchObservation{Latency: 100 * time.Millisecond, TTFT: 50 * time.Millisecond, OutputTokens: 100, TokensPerSecond: 50})
+
+	sink := &collectTestSink{}
+	result, err := registry.Dispatch(context.Background(), "req", protocol.InferRequest{Model: "m"}, sink)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if result.NodeID != "node-proven" || sink.content != "proven" {
+		t.Fatalf("result = %+v content=%q, want proven node over fresh cold-start node", result, sink.content)
+	}
+	if fresh.calls != 0 || proven.calls != 1 {
+		t.Fatalf("calls fresh=%d proven=%d, want only proven", fresh.calls, proven.calls)
+	}
+}
+
 func TestDispatchDoesNotRetryAfterFirstChunk(t *testing.T) {
 	registry := NewRegistry()
 	first := &scriptedConn{chunk: "partial", err: errors.New("decode failed")}

@@ -24,7 +24,7 @@ For every successful inference, the coordinator can append one settlement event:
 
 Prompt bodies are not recorded.
 
-The coordinator does not use worker-reported token counts for accounting. It estimates prompt usage from the request it received and completion usage from streamed chunks it relayed. This prevents a provider node from simply inflating `prompt_tokens` or `completion_tokens` in its final `done` message. The current estimate is intentionally simple and should be replaced by model-family tokenizers before real money settlement.
+The coordinator does not use worker-reported token counts for accounting. It estimates prompt usage from the request it received and completion usage from streamed chunks it relayed using a simple rune-count heuristic. This prevents a provider node from simply inflating `prompt_tokens` or `completion_tokens` in its final `done` message. The current estimate is intentionally simple and should be replaced by model-family tokenizers before real money settlement.
 
 ## Hash-chain design
 
@@ -112,7 +112,7 @@ The first reputation model uses objective local signals:
 - disabled provider state
 - benchmark challenge pass rate and score
 
-The coordinator refreshes provider scores before chat dispatch and synthetic challenges. The scheduler uses those scores plus coordinator-observed latency, TTFT, estimated tokens/sec, and node failure rate as routing penalties, so providers with weak challenge history, error streaks, cooldowns, penalties, slow responses, or poor reliability are less likely to receive traffic when healthier eligible providers exist.
+The coordinator refreshes provider scores on a background interval and when the admin reputation endpoint is inspected, keeping reputation recomputation out of the per-request hot path. The scheduler uses those scores plus coordinator-observed latency, TTFT, estimated tokens/sec, and node failure rate as routing penalties, so providers with weak challenge history, error streaks, cooldowns, penalties, slow responses, or poor reliability are less likely to receive traffic when healthier eligible providers exist.
 
 This is intentionally off-chain and explainable. Later versions can add benchmarking, signed attestations, challenge jobs, staking, slashing, and public dashboards.
 
@@ -187,7 +187,7 @@ curl http://localhost:8080/admin/challenges/verify \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
-Challenge summaries feed provider reputation. Providers with weak pass rates or low challenge scores receive lower reputation until their later performance improves. When `provider_id` is omitted, the synthetic runner rotates across eligible providers instead of always testing the cheapest current node. Synthetic challenge requests use normal chat-shaped request IDs instead of a visible `challenge-` prefix. Synthetic challenge records store pass/fail, score, node, provider, latency, and hash links, not model output.
+Challenge summaries feed provider reputation. Providers with weak pass rates or low challenge scores receive lower reputation until their later performance improves. When `provider_id` is omitted, the synthetic runner rotates across eligible providers instead of always testing the cheapest current node. Synthetic challenge requests use normal chat-shaped request IDs and avoid obvious benchmark wording, but true indistinguishability still requires mixing verification into real traffic. Synthetic challenge records store pass/fail, score, node, provider, latency, and hash links, not model output.
 
 ## Integrity anchor
 

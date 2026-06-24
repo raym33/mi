@@ -146,8 +146,8 @@ See [Renting Compute Privately](docs/rental-privacy.md).
 
 City deployments can enable a tamper-evident settlement chain. It records request metadata, coordinator-estimated token usage, latency, dispatch attempts, consumer debits, provider rewards, optional SLA penalties, and linked hashes without storing prompt bodies.
 
-Provider reputation combines node health, cooldowns, error streaks, completed settlement events, tokens served, accrued rewards, and benchmark challenge results. The scheduler uses that provider score plus coordinator-observed latency, TTFT, throughput, and failure rate as routing signals, so weak evidence or poor observed performance can push traffic toward healthier providers.
-Benchmark challenge events can be recorded manually or by an optional synthetic runner in a separate hash-chain and feed provider reputation. Synthetic challenge requests use normal chat-shaped request IDs so nodes cannot simply detect a `challenge-` prefix.
+Provider reputation combines node health, cooldowns, error streaks, completed settlement events, tokens served, accrued rewards, and benchmark challenge results. A background refresher feeds those scores to the scheduler, which also uses coordinator-observed latency, TTFT, throughput, and failure rate as routing signals.
+Benchmark challenge events can be recorded manually or by an optional synthetic runner in a separate hash-chain and feed provider reputation. Synthetic challenge requests avoid visible `challenge-` request IDs and obvious benchmark wording, but they are not yet cryptographically indistinguishable from normal traffic.
 
 See [DePIN Settlement And Rewards](docs/depin-settlement.md).
 
