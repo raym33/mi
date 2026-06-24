@@ -1,12 +1,16 @@
 package openai
 
 type ChatCompletionRequest struct {
-	Model       string        `json:"model"`
-	Messages    []ChatMessage `json:"messages"`
-	Stream      bool          `json:"stream,omitempty"`
-	PrivacyTier string        `json:"privacy_tier,omitempty"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	MaxTokens   *int          `json:"max_tokens,omitempty"`
+	Model          string        `json:"model"`
+	Messages       []ChatMessage `json:"messages"`
+	Stream         bool          `json:"stream,omitempty"`
+	PrivacyTier    string        `json:"privacy_tier,omitempty"`
+	MiBackend      string        `json:"mi_backend,omitempty"`
+	MiDeviceKind   string        `json:"mi_device_kind,omitempty"`
+	MiSoC          string        `json:"mi_soc,omitempty"`
+	MiAccelerators []string      `json:"mi_accelerators,omitempty"`
+	Temperature    *float64      `json:"temperature,omitempty"`
+	MaxTokens      *int          `json:"max_tokens,omitempty"`
 }
 
 type ChatMessage struct {

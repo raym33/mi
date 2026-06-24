@@ -168,6 +168,21 @@ curl http://localhost:8080/v1/chat/completions \
 
 If `privacy_tier` is omitted, the coordinator uses `private`. You can also send `X-Mi-Privacy-Tier: private`, `community`, or `public`.
 
+Optional hardware hints can route requests to a specific class of node:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H 'Authorization: Bearer sk-mi-studio-a-dev' \
+  -H 'Content-Type: application/json' \
+  -H 'X-Mi-Accelerator: cuda' \
+  -d '{
+    "model": "fast",
+    "messages": [{"role": "user", "content": "Use a CUDA-capable node if available"}]
+  }'
+```
+
+Body fields are also supported: `mi_backend`, `mi_device_kind`, `mi_soc`, and `mi_accelerators`.
+
 Provider privacy is enforced by the coordinator account policy. If a provider account is configured as `public`, its node cannot receive private work even if the local node-agent config claims `privacy_mode: "private"`.
 
 Model aliases are configured under `models.aliases`. For example, `fast` can point to `llama3.1:8b`, while a future `code` alias can point to a coding model. The OpenAI-compatible model list only shows aliases whose concrete target is currently available on at least one healthy node.

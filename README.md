@@ -23,7 +23,7 @@ It helps with:
 - Exposes `/v1/chat/completions` and `/v1/models`.
 - Lets each provider machine connect outbound as a `node-agent`.
 - Serves local models through an inference backend abstraction. Ollama is supported today, with room for MLX, QNN, LiteRT, and Android runtimes later.
-- Routes by model availability, health, queue depth, capacity, cooldowns, and privacy tier.
+- Routes by model availability, health, queue depth, capacity, cooldowns, privacy tier, and optional backend/hardware hints.
 - Retries another node when a provider fails before the first streamed token.
 - Tracks usage for both consumers and providers.
 - Supports API keys, provider tokens, quota limits, dynamic enrollment, rotation, and revocation.

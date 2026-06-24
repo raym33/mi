@@ -169,6 +169,63 @@ func TestChatRejectsInvalidPrivacyTier(t *testing.T) {
 	}
 }
 
+func TestChatRoutesCapabilityHints(t *testing.T) {
+	market, err := city.New(config.CityConfig{}, []string{"sk-test"})
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	settlements, err := settlement.New(config.SettlementConfig{})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{
+		NodeID:       "mac-node",
+		ProviderID:   "provider-mac",
+		Backend:      "mlx",
+		DeviceKind:   "mac",
+		Accelerators: []string{"metal"},
+		Models:       []string{"llama3.1:8b"},
+	}, challengeNodeConn{content: "metal"})
+	registry.Register(protocol.Register{
+		NodeID:       "cuda-node",
+		ProviderID:   "provider-cuda",
+		Backend:      "vllm",
+		DeviceKind:   "server",
+		Accelerators: []string{"cuda"},
+		Models:       []string{"llama3.1:8b"},
+	}, challengeNodeConn{content: "cuda"})
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "mac-node", Models: []string{"llama3.1:8b"}, LoadAverage: 0})
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "cuda-node", Models: []string{"llama3.1:8b"}, LoadAverage: 10})
+	s := &server{registry: registry, market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), settlement: settlements}
+	handler := s.requireConsumerQuota(s.chatCompletions)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{
+		"model": "llama3.1:8b",
+		"mi_backend": "vllm",
+		"mi_accelerators": ["cuda"],
+		"messages": [{"role": "user", "content": "hello"}]
+	}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-Mi-Node-Id") != "cuda-node" || rec.Header().Get("X-Mi-Backend") != "vllm" || rec.Header().Get("X-Mi-Accelerators") != "cuda" {
+		t.Fatalf("headers node=%q backend=%q accelerators=%q, want cuda route", rec.Header().Get("X-Mi-Node-Id"), rec.Header().Get("X-Mi-Backend"), rec.Header().Get("X-Mi-Accelerators"))
+	}
+	var response openai.ChatCompletionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v: %s", err, rec.Body.String())
+	}
+	if response.Choices[0].Message.Content != "cuda" {
+		t.Fatalf("content = %q, want cuda", response.Choices[0].Message.Content)
+	}
+}
+
 func TestRunSyntheticChallengeRecordsProviderEvidence(t *testing.T) {
 	market, err := city.New(config.CityConfig{}, nil)
 	if err != nil {

@@ -47,12 +47,16 @@ type Heartbeat struct {
 }
 
 type InferRequest struct {
-	Model       string            `json:"model"`
-	Messages    []ProtocolMessage `json:"messages"`
-	Stream      bool              `json:"stream"`
-	PrivacyTier string            `json:"privacy_tier,omitempty"`
-	Temperature *float64          `json:"temperature,omitempty"`
-	MaxTokens   *int              `json:"max_tokens,omitempty"`
+	Model        string            `json:"model"`
+	Messages     []ProtocolMessage `json:"messages"`
+	Stream       bool              `json:"stream"`
+	PrivacyTier  string            `json:"privacy_tier,omitempty"`
+	Backend      string            `json:"backend,omitempty"`
+	DeviceKind   string            `json:"device_kind,omitempty"`
+	SoC          string            `json:"soc,omitempty"`
+	Accelerators []string          `json:"accelerators,omitempty"`
+	Temperature  *float64          `json:"temperature,omitempty"`
+	MaxTokens    *int              `json:"max_tokens,omitempty"`
 }
 
 type ProtocolMessage struct {

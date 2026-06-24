@@ -568,11 +568,15 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	modelResolution := s.modelCatalog.Resolve(req.Model)
 	inferReq := protocol.InferRequest{
-		Model:       modelResolution.Target,
-		Stream:      req.Stream,
-		PrivacyTier: privacyTier,
-		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
+		Model:        modelResolution.Target,
+		Stream:       req.Stream,
+		PrivacyTier:  privacyTier,
+		Backend:      requestCapabilityValue(r, "X-Mi-Backend", req.MiBackend),
+		DeviceKind:   requestCapabilityValue(r, "X-Mi-Device-Kind", req.MiDeviceKind),
+		SoC:          requestCapabilityValue(r, "X-Mi-SoC", req.MiSoC),
+		Accelerators: requestAccelerators(r, req),
+		Temperature:  req.Temperature,
+		MaxTokens:    req.MaxTokens,
 	}
 	for _, msg := range req.Messages {
 		inferReq.Messages = append(inferReq.Messages, protocol.ProtocolMessage{Role: msg.Role, Content: msg.Content})
@@ -920,6 +924,15 @@ func setDispatchHeaders(w http.ResponseWriter, result scheduler.DispatchResult) 
 	if result.ProviderID != "" {
 		w.Header().Set("X-Mi-Provider-Id", result.ProviderID)
 	}
+	if result.Backend != "" {
+		w.Header().Set("X-Mi-Backend", result.Backend)
+	}
+	if result.DeviceKind != "" {
+		w.Header().Set("X-Mi-Device-Kind", result.DeviceKind)
+	}
+	if len(result.Accelerators) > 0 {
+		w.Header().Set("X-Mi-Accelerators", strings.Join(result.Accelerators, ","))
+	}
 }
 
 func requestPrivacyTier(r *http.Request, req openai.ChatCompletionRequest) (string, error) {
@@ -927,6 +940,38 @@ func requestPrivacyTier(r *http.Request, req openai.ChatCompletionRequest) (stri
 		return privacy.NormalizeTier(tier)
 	}
 	return privacy.NormalizeTier(req.PrivacyTier)
+}
+
+func requestCapabilityValue(r *http.Request, header string, value string) string {
+	if fromHeader := strings.TrimSpace(r.Header.Get(header)); fromHeader != "" {
+		return fromHeader
+	}
+	return strings.TrimSpace(value)
+}
+
+func requestAccelerators(r *http.Request, req openai.ChatCompletionRequest) []string {
+	values := append([]string(nil), req.MiAccelerators...)
+	if header := r.Header.Get("X-Mi-Accelerator"); header != "" {
+		values = append(values, strings.Split(header, ",")...)
+	}
+	if header := r.Header.Get("X-Mi-Accelerators"); header != "" {
+		values = append(values, strings.Split(header, ",")...)
+	}
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func estimateTokenBudget(req openai.ChatCompletionRequest) int64 {
@@ -946,6 +991,9 @@ func declareDispatchTrailers(w http.ResponseWriter) {
 	w.Header().Add("Trailer", "X-Mi-Dispatch-Attempts")
 	w.Header().Add("Trailer", "X-Mi-Node-Id")
 	w.Header().Add("Trailer", "X-Mi-Provider-Id")
+	w.Header().Add("Trailer", "X-Mi-Backend")
+	w.Header().Add("Trailer", "X-Mi-Device-Kind")
+	w.Header().Add("Trailer", "X-Mi-Accelerators")
 }
 
 func setDispatchTrailers(w http.ResponseWriter, result scheduler.DispatchResult) {

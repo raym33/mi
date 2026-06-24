@@ -23,6 +23,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Cooldowns for unstable nodes.
 - Coordinator-enforced privacy tiers for private, community, and public rented compute.
 - Node backend abstraction and hardware metadata for future Android, Snapdragon, Xiaomi, MLX, QNN, and LiteRT support.
+- Optional backend, device, SoC, and accelerator hints for heterogeneous routing.
 
 ## Next
 

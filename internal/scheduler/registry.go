@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -110,10 +111,13 @@ type NetworkStatus struct {
 }
 
 type DispatchResult struct {
-	Done       protocol.InferDone
-	NodeID     string
-	ProviderID string
-	Attempts   int
+	Done         protocol.InferDone
+	NodeID       string
+	ProviderID   string
+	Backend      string
+	DeviceKind   string
+	Accelerators []string
+	Attempts     int
 }
 
 type RetryableError interface {
@@ -390,7 +394,7 @@ func (r *Registry) dispatch(ctx context.Context, requestID string, req protocol.
 	var lastErr error
 	attempts := 0
 	for {
-		node, err := r.reserveFiltered(req.Model, req.PrivacyTier, attempted, providerID)
+		node, err := r.reserveFiltered(req, attempted, providerID)
 		if err != nil {
 			if lastErr != nil {
 				return DispatchResult{Attempts: attempts}, fmt.Errorf("%w after %d failed attempt(s): %v", ErrNoNode, attempts, lastErr)
@@ -403,10 +407,10 @@ func (r *Registry) dispatch(ctx context.Context, requestID string, req protocol.
 		r.release(node.ID)
 		if err == nil {
 			r.recordSuccess(node.ID)
-			return DispatchResult{Done: done, NodeID: node.ID, ProviderID: node.ProviderID, Attempts: attempts}, nil
+			return nodeDispatchResult(node, done, attempts), nil
 		}
 		if tracker.sent || !canRetry(ctx, err) {
-			return DispatchResult{NodeID: node.ID, ProviderID: node.ProviderID, Attempts: attempts}, err
+			return nodeDispatchResult(node, protocol.InferDone{}, attempts), err
 		}
 		r.recordPreTokenFailure(node.ID, err)
 		attempted[node.ID] = true
@@ -414,11 +418,11 @@ func (r *Registry) dispatch(ctx context.Context, requestID string, req protocol.
 	}
 }
 
-func (r *Registry) reserve(model string, privacyTier string, exclude map[string]bool) (*Node, error) {
-	return r.reserveFiltered(model, privacyTier, exclude, "")
+func (r *Registry) reserve(req protocol.InferRequest, exclude map[string]bool) (*Node, error) {
+	return r.reserveFiltered(req, exclude, "")
 }
 
-func (r *Registry) reserveFiltered(model string, privacyTier string, exclude map[string]bool, providerID string) (*Node, error) {
+func (r *Registry) reserveFiltered(req protocol.InferRequest, exclude map[string]bool, providerID string) (*Node, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -431,7 +435,7 @@ func (r *Registry) reserveFiltered(model string, privacyTier string, exclude map
 		if providerID != "" && node.ProviderID != providerID {
 			continue
 		}
-		if node.healthy() && !node.inCooldown(now) && node.Models[model] && node.acceptsPrivacy(privacyTier) && node.Active < node.MaxConcurrent {
+		if node.healthy() && !node.inCooldown(now) && node.Models[req.Model] && node.acceptsPrivacy(req.PrivacyTier) && node.matchesCapabilities(req) && node.Active < node.MaxConcurrent {
 			candidates = append(candidates, node)
 		}
 	}
@@ -444,6 +448,53 @@ func (r *Registry) reserveFiltered(model string, privacyTier string, exclude map
 	selected := candidates[0]
 	selected.Active++
 	return selected, nil
+}
+
+func nodeDispatchResult(node *Node, done protocol.InferDone, attempts int) DispatchResult {
+	accelerators := make([]string, 0, len(node.Accelerators))
+	for accelerator := range node.Accelerators {
+		accelerators = append(accelerators, accelerator)
+	}
+	sort.Strings(accelerators)
+	return DispatchResult{
+		Done:         done,
+		NodeID:       node.ID,
+		ProviderID:   node.ProviderID,
+		Backend:      node.Backend,
+		DeviceKind:   node.DeviceKind,
+		Accelerators: accelerators,
+		Attempts:     attempts,
+	}
+}
+
+func (n *Node) matchesCapabilities(req protocol.InferRequest) bool {
+	if req.Backend != "" && !strings.EqualFold(n.Backend, req.Backend) {
+		return false
+	}
+	if req.DeviceKind != "" && !strings.EqualFold(n.DeviceKind, req.DeviceKind) {
+		return false
+	}
+	if req.SoC != "" && !strings.EqualFold(n.SoC, req.SoC) {
+		return false
+	}
+	for _, required := range req.Accelerators {
+		if required == "" {
+			continue
+		}
+		if !n.hasAccelerator(required) {
+			return false
+		}
+	}
+	return true
+}
+
+func (n *Node) hasAccelerator(required string) bool {
+	for accelerator := range n.Accelerators {
+		if strings.EqualFold(accelerator, required) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Registry) release(nodeID string) {

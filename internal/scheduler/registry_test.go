@@ -127,6 +127,39 @@ func TestDispatchToProviderTargetsOnlyThatProvider(t *testing.T) {
 	}
 }
 
+func TestDispatchFiltersBackendAndAccelerators(t *testing.T) {
+	registry := NewRegistry()
+	metal := &scriptedConn{chunk: "metal", done: protocol.InferDone{FinishReason: "stop"}}
+	cuda := &scriptedConn{chunk: "cuda", done: protocol.InferDone{FinishReason: "stop"}}
+	registry.Register(protocol.Register{
+		NodeID:       "mac-node",
+		ProviderID:   "provider-mac",
+		Backend:      "mlx",
+		DeviceKind:   "mac",
+		Accelerators: []string{"metal"},
+		Models:       []string{"m"},
+	}, metal)
+	registry.Register(protocol.Register{
+		NodeID:       "cuda-node",
+		ProviderID:   "provider-cuda",
+		Backend:      "vllm",
+		DeviceKind:   "server",
+		Accelerators: []string{"cuda"},
+		Models:       []string{"m"},
+	}, cuda)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "mac-node", Models: []string{"m"}, LoadAverage: 0})
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "cuda-node", Models: []string{"m"}, LoadAverage: 10})
+
+	sink := &collectTestSink{}
+	result, err := registry.Dispatch(context.Background(), "req", protocol.InferRequest{Model: "m", Backend: "VLLM", Accelerators: []string{"CUDA"}}, sink)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if result.NodeID != "cuda-node" || result.Backend != "vllm" || sink.content != "cuda" || metal.calls != 0 {
+		t.Fatalf("result = %+v content=%q metal calls=%d, want cuda node only", result, sink.content, metal.calls)
+	}
+}
+
 func TestDispatchDoesNotRetryAfterFirstChunk(t *testing.T) {
 	registry := NewRegistry()
 	first := &scriptedConn{chunk: "partial", err: errors.New("decode failed")}

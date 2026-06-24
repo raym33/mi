@@ -55,7 +55,22 @@ hardware:
   network_mode: "wifi_only"
 ```
 
-The coordinator stores and exposes this metadata through node snapshots, network status, and reputation reports. Future scheduling can route by backend, accelerator, SoC, power mode, thermal state, price, and challenge score.
+The coordinator stores and exposes this metadata through node snapshots, network status, and reputation reports. Requests can already ask for `mi_backend`, `mi_device_kind`, `mi_soc`, and `mi_accelerators`, so early Android/Snapdragon experiments can be routed explicitly without changing the public OpenAI-compatible endpoint.
+
+Example request for a future Xiaomi Snapdragon QNN node:
+
+```json
+{
+  "model": "fast",
+  "mi_backend": "ort-qnn",
+  "mi_device_kind": "android",
+  "mi_soc": "snapdragon_8_elite",
+  "mi_accelerators": ["hexagon_npu"],
+  "messages": [{"role": "user", "content": "Run this on the phone NPU"}]
+}
+```
+
+Future scheduling can also route by power mode, thermal state, price, and challenge score.
 
 ## Android Agent Plan
 

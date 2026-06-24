@@ -22,6 +22,26 @@
 6. The node streams chunks from its configured backend back to the coordinator.
 7. The coordinator emits OpenAI-style SSE chunks to the client.
 
+Requests can include optional hardware routing hints:
+
+```json
+{
+  "model": "fast",
+  "mi_backend": "vllm",
+  "mi_device_kind": "server",
+  "mi_accelerators": ["cuda"],
+  "messages": [{"role": "user", "content": "Use a CUDA node"}]
+}
+```
+
+Equivalent headers are also supported:
+
+- `X-Mi-Backend`
+- `X-Mi-Device-Kind`
+- `X-Mi-SoC`
+- `X-Mi-Accelerator`
+- `X-Mi-Accelerators`
+
 ## Failover
 
 The scheduler retries another eligible node only while no chunk has been sent to the client. This covers node disconnects, capacity races, and startup failures without duplicating generated text.
@@ -40,6 +60,9 @@ Responses include dispatch metadata:
 - `X-Mi-Dispatch-Attempts`
 - `X-Mi-Node-Id`
 - `X-Mi-Provider-Id`
+- `X-Mi-Backend`
+- `X-Mi-Device-Kind`
+- `X-Mi-Accelerators`
 
 For streaming responses, those values are sent as HTTP trailers.
 
@@ -57,7 +80,7 @@ Admin node snapshots expose:
 
 ## Backend And Hardware Metadata
 
-Nodes advertise their inference backend and hardware profile during registration. This does not change scheduling yet, but it gives the coordinator enough information to support future policies such as:
+Nodes advertise their inference backend and hardware profile during registration. The coordinator can already filter dispatch by requested backend, device kind, SoC, and accelerator hints. This gives future policies enough information to:
 
 - route Apple Silicon nodes to MLX or Metal-backed models
 - route Snapdragon/Xiaomi nodes to QNN-backed models
