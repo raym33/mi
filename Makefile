@@ -1,4 +1,4 @@
-.PHONY: demo build test run-coordinator run-node run-city-coordinator run-city-node run-city-coordinator-tls run-city-node-tls dev-certs smoke city-smoke city-enroll backup anchor-hash
+.PHONY: verify demo build test run-coordinator run-node run-city-coordinator run-city-node run-city-coordinator-tls run-city-node-tls dev-certs smoke city-smoke city-enroll backup anchor-hash
 
 build:
 	go build -o bin/coordinator ./coordinator/cmd/coordinator
@@ -45,3 +45,10 @@ anchor-hash:
 
 demo:
 	bash scripts/demo.sh
+
+verify:
+	gofmt -l . | tee /dev/stderr | (! read)
+	go vet ./...
+	go build ./coordinator/cmd/coordinator ./node-agent/cmd/node-agent
+	go test ./...
+	go test -race ./...
