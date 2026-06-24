@@ -37,11 +37,11 @@ import (
 )
 
 type server struct {
-	registry              *scheduler.Registry
-	market                *city.Market
-	modelCatalog          *modelcatalog.Catalog
-	settlement            *settlement.Ledger
-	challenges            *challenge.Ledger
+	registry              nodeRegistry
+	market                accountMarket
+	modelCatalog          catalogService
+	settlement            settlementLedger
+	challenges            challengeLedger
 	challengeMu           sync.Mutex
 	nextChallengeProvider int
 	adminToken            string
