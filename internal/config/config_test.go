@@ -17,7 +17,7 @@ func TestLoadNodeAgentDefaultsBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load node agent: %v", err)
 	}
-	if cfg.Backend.Type != "ollama" || cfg.Backend.URL != "http://localhost:11434" {
+	if cfg.Backend.Type != "ollama" || cfg.Backend.URL != "http://127.0.0.1:11434" {
 		t.Fatalf("backend = %+v, want normalized ollama default URL", cfg.Backend)
 	}
 }

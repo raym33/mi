@@ -12,7 +12,7 @@ tls:
   insecure_skip_verify: false
 backend:
   type: "ollama"
-  url: "http://localhost:11434"
+  url: "http://127.0.0.1:11434"
 hardware:
   kind: "mac"
   vendor: "apple"
@@ -21,7 +21,7 @@ hardware:
   accelerators: ["metal"]
   power_mode: "always_on"
   network_mode: "lan"
-ollama_url: "http://localhost:11434"
+ollama_url: "http://127.0.0.1:11434"
 models:
   - "llama3.1:8b"
 heartbeat_interval: "5s"

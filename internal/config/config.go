@@ -171,7 +171,7 @@ func LoadNodeAgent(path string) (NodeAgent, error) {
 	}
 	cfg.Backend.Type = strings.ToLower(cfg.Backend.Type)
 	if cfg.OllamaURL == "" {
-		cfg.OllamaURL = "http://localhost:11434"
+		cfg.OllamaURL = "http://127.0.0.1:11434"
 	}
 	if cfg.Backend.URL == "" && cfg.Backend.Type == "ollama" {
 		cfg.Backend.URL = cfg.OllamaURL
