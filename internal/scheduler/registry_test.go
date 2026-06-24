@@ -18,6 +18,10 @@ func (f *fakeConn) SendInference(context.Context, string, protocol.InferRequest,
 	return protocol.InferDone{}, nil
 }
 
+func (f *fakeConn) SendEmbedding(context.Context, string, protocol.EmbedRequest) (protocol.EmbedResult, error) {
+	return protocol.EmbedResult{Vectors: [][]float32{{1}}, PromptTokens: 1}, nil
+}
+
 func (f *fakeConn) Close() error {
 	f.closed = true
 	return nil
@@ -449,6 +453,14 @@ func (s *scriptedConn) SendInference(_ context.Context, _ string, _ protocol.Inf
 		return protocol.InferDone{}, s.err
 	}
 	return s.done, nil
+}
+
+func (s *scriptedConn) SendEmbedding(_ context.Context, _ string, _ protocol.EmbedRequest) (protocol.EmbedResult, error) {
+	s.calls++
+	if s.err != nil {
+		return protocol.EmbedResult{}, s.err
+	}
+	return protocol.EmbedResult{Vectors: [][]float32{{1}}, PromptTokens: 1}, nil
 }
 
 func (s *scriptedConn) Close() error {

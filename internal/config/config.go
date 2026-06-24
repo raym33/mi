@@ -9,17 +9,18 @@ import (
 )
 
 type Coordinator struct {
-	ListenAddr   string            `yaml:"listen_addr"`
-	APIKeys      []string          `yaml:"api_keys"`
-	AdminToken   string            `yaml:"admin_token"`
-	DevAdminOpen bool              `yaml:"dev_admin_open"`
-	TLS          ServerTLSConfig   `yaml:"tls"`
-	City         CityConfig        `yaml:"city"`
-	Settlement   SettlementConfig  `yaml:"settlement"`
-	Idempotency  IdempotencyConfig `yaml:"idempotency"`
-	Challenges   ChallengeConfig   `yaml:"challenges"`
-	Models       ModelConfig       `yaml:"models"`
-	Scheduler    SchedulerConfig   `yaml:"scheduler"`
+	ListenAddr      string            `yaml:"listen_addr"`
+	APIKeys         []string          `yaml:"api_keys"`
+	AdminToken      string            `yaml:"admin_token"`
+	DevAdminOpen    bool              `yaml:"dev_admin_open"`
+	TLS             ServerTLSConfig   `yaml:"tls"`
+	City            CityConfig        `yaml:"city"`
+	Settlement      SettlementConfig  `yaml:"settlement"`
+	Idempotency     IdempotencyConfig `yaml:"idempotency"`
+	Challenges      ChallengeConfig   `yaml:"challenges"`
+	Models          ModelConfig       `yaml:"models"`
+	Scheduler       SchedulerConfig   `yaml:"scheduler"`
+	MaxRequestBytes int64             `yaml:"max_request_bytes"`
 }
 
 type ServerTLSConfig struct {
@@ -96,7 +97,8 @@ type ModelAlias struct {
 }
 
 type SchedulerConfig struct {
-	MaxQueuePenalty int `yaml:"max_queue_penalty"`
+	MaxQueuePenalty int      `yaml:"max_queue_penalty"`
+	RequestTimeout  Duration `yaml:"request_timeout"`
 }
 
 type NodeAgent struct {

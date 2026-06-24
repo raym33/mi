@@ -5,15 +5,17 @@ import "time"
 const Version = 1
 
 type Envelope struct {
-	Version   int           `json:"version,omitempty"`
-	Type      string        `json:"type"`
-	RequestID string        `json:"request_id,omitempty"`
-	Register  *Register     `json:"register,omitempty"`
-	Heartbeat *Heartbeat    `json:"heartbeat,omitempty"`
-	Infer     *InferRequest `json:"infer,omitempty"`
-	Chunk     *InferChunk   `json:"chunk,omitempty"`
-	Done      *InferDone    `json:"done,omitempty"`
-	Error     *InferError   `json:"error,omitempty"`
+	Version    int           `json:"version,omitempty"`
+	Type       string        `json:"type"`
+	RequestID  string        `json:"request_id,omitempty"`
+	Register   *Register     `json:"register,omitempty"`
+	Heartbeat  *Heartbeat    `json:"heartbeat,omitempty"`
+	Infer      *InferRequest `json:"infer,omitempty"`
+	Embed      *EmbedRequest `json:"embed,omitempty"`
+	Chunk      *InferChunk   `json:"chunk,omitempty"`
+	Done       *InferDone    `json:"done,omitempty"`
+	Embeddings *EmbedResult  `json:"embeddings,omitempty"`
+	Error      *InferError   `json:"error,omitempty"`
 }
 
 type Register struct {
@@ -67,6 +69,17 @@ type InferRequest struct {
 type ProtocolMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+type EmbedRequest struct {
+	Model       string   `json:"model"`
+	Input       []string `json:"input"`
+	PrivacyTier string   `json:"privacy_tier,omitempty"`
+}
+
+type EmbedResult struct {
+	Vectors      [][]float32 `json:"vectors"`
+	PromptTokens int         `json:"prompt_tokens"`
 }
 
 type InferChunk struct {

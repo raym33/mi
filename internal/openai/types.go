@@ -1,5 +1,7 @@
 package openai
 
+import "encoding/json"
+
 type ChatCompletionRequest struct {
 	Model          string        `json:"model"`
 	Messages       []ChatMessage `json:"messages"`
@@ -63,4 +65,24 @@ type Model struct {
 	Object  string `json:"object"`
 	Created int64  `json:"created"`
 	OwnedBy string `json:"owned_by"`
+}
+
+type EmbeddingRequest struct {
+	Model          string          `json:"model"`
+	Input          json.RawMessage `json:"input"`
+	PrivacyTier    string          `json:"privacy_tier,omitempty"`
+	EncodingFormat string          `json:"encoding_format,omitempty"`
+}
+
+type EmbeddingResponse struct {
+	Object string          `json:"object"`
+	Data   []EmbeddingData `json:"data"`
+	Model  string          `json:"model"`
+	Usage  Usage           `json:"usage"`
+}
+
+type EmbeddingData struct {
+	Object    string    `json:"object"`
+	Index     int       `json:"index"`
+	Embedding []float32 `json:"embedding"`
 }

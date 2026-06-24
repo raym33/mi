@@ -178,19 +178,32 @@ func (a *agent) readLoop(ctx context.Context, conn *safeConn) error {
 		if err != nil {
 			return err
 		}
-		if msg.Type != "infer" || msg.Infer == nil {
+		switch {
+		case msg.Type == "infer" && msg.Infer != nil:
+			if int(a.active.Load()) >= a.cfg.MaxConcurrent {
+				_ = conn.writeJSON(ctx, protocol.Envelope{
+					Version:   protocol.Version,
+					Type:      "error",
+					RequestID: msg.RequestID,
+					Error:     &protocol.InferError{Message: "node at capacity", Retryable: true},
+				})
+				continue
+			}
+			go a.handleInference(ctx, conn, msg.RequestID, *msg.Infer)
+		case msg.Type == "embed" && msg.Embed != nil:
+			if int(a.active.Load()) >= a.cfg.MaxConcurrent {
+				_ = conn.writeJSON(ctx, protocol.Envelope{
+					Version:   protocol.Version,
+					Type:      "error",
+					RequestID: msg.RequestID,
+					Error:     &protocol.InferError{Message: "node at capacity", Retryable: true},
+				})
+				continue
+			}
+			go a.handleEmbedding(ctx, conn, msg.RequestID, *msg.Embed)
+		default:
 			continue
 		}
-		if int(a.active.Load()) >= a.cfg.MaxConcurrent {
-			_ = conn.writeJSON(ctx, protocol.Envelope{
-				Version:   protocol.Version,
-				Type:      "error",
-				RequestID: msg.RequestID,
-				Error:     &protocol.InferError{Message: "node at capacity", Retryable: true},
-			})
-			continue
-		}
-		go a.handleInference(ctx, conn, msg.RequestID, *msg.Infer)
 	}
 }
 
@@ -216,6 +229,23 @@ func (a *agent) handleInference(ctx context.Context, conn *safeConn, requestID s
 		return
 	}
 	_ = conn.writeJSON(ctx, protocol.Envelope{Version: protocol.Version, Type: "done", RequestID: requestID, Done: &done})
+}
+
+func (a *agent) handleEmbedding(ctx context.Context, conn *safeConn, requestID string, req protocol.EmbedRequest) {
+	a.active.Add(1)
+	defer a.active.Add(-1)
+
+	result, err := a.backend.Embed(ctx, req.Model, req.Input)
+	if err != nil {
+		_ = conn.writeJSON(ctx, protocol.Envelope{
+			Version:   protocol.Version,
+			Type:      "error",
+			RequestID: requestID,
+			Error:     &protocol.InferError{Message: err.Error(), Retryable: retryable(err)},
+		})
+		return
+	}
+	_ = conn.writeJSON(ctx, protocol.Envelope{Version: protocol.Version, Type: "embeddings", RequestID: requestID, Embeddings: &result})
 }
 
 func newInferenceBackend(cfg config.NodeAgent) (backend.Runtime, error) {

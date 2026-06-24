@@ -52,7 +52,11 @@ type server struct {
 	adminToken            string
 	devAdminOpen          bool
 	requireNodeClientCert bool
+	requestTimeout        time.Duration
+	maxRequestBytes       int64
 }
+
+const defaultMaxRequestBytes = 8 << 20 // 8 MiB
 
 const defaultReservedOutputTokens = 1024
 const defaultReputationRefreshInterval = 30 * time.Second
@@ -102,6 +106,8 @@ func main() {
 		adminToken:            cfg.AdminToken,
 		devAdminOpen:          cfg.DevAdminOpen,
 		requireNodeClientCert: cfg.TLS.NodeClientCAFile != "",
+		requestTimeout:        cfg.Scheduler.RequestTimeout.Duration,
+		maxRequestBytes:       maxRequestBytesOrDefault(cfg.MaxRequestBytes),
 	}
 
 	mux := http.NewServeMux()
@@ -111,6 +117,7 @@ func main() {
 	mux.HandleFunc("GET /v1/models", s.requireConsumer(s.models))
 	mux.HandleFunc("GET /v1/models/catalog", s.requireConsumer(s.modelsCatalog))
 	mux.HandleFunc("POST /v1/chat/completions", s.requireConsumerQuota(s.chatCompletions))
+	mux.HandleFunc("POST /v1/embeddings", s.requireConsumerQuota(s.embeddings))
 	mux.HandleFunc("GET /ws/node", s.nodeWebSocket)
 	mux.HandleFunc("GET /admin", s.adminDashboardRedirect)
 	mux.HandleFunc("GET /admin/dashboard", s.adminDashboard)
@@ -640,6 +647,24 @@ func hashIntegrityAnchor(anchor integrityAnchor) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func maxRequestBytesOrDefault(configured int64) int64 {
+	if configured > 0 {
+		return configured
+	}
+	return defaultMaxRequestBytes
+}
+
+// writeDecodeError maps a request-body decode failure to a status code: 413 when
+// the body exceeded the configured limit, otherwise 400.
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusBadRequest)
+}
+
 func idempotencyScopedKey(consumerID, key string) string {
 	sum := sha256.Sum256([]byte(consumerID + "\x00" + key))
 	return hex.EncodeToString(sum[:])
@@ -907,14 +932,24 @@ func (s *server) adminDisableProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
+	if s.maxRequestBytes > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
+	}
 	var req openai.ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeDecodeError(w, err)
 		return
 	}
 	if req.Model == "" || len(req.Messages) == 0 {
 		http.Error(w, "model and messages are required", http.StatusBadRequest)
 		return
+	}
+
+	// Bound the request so a stuck node cannot hang the client indefinitely.
+	if s.requestTimeout > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
+		defer cancel()
+		r = r.WithContext(ctx)
 	}
 
 	requestID := "chatcmpl-" + randomID()
@@ -1010,6 +1045,115 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.blockingChat(w, r, requestID, req.Model, inferReq, cid, reservation, activeIdemKey)
+}
+
+func (s *server) embeddings(w http.ResponseWriter, r *http.Request) {
+	if s.maxRequestBytes > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
+	}
+	var req openai.EmbeddingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeDecodeError(w, err)
+		return
+	}
+	input, err := parseEmbeddingInput(req.Input)
+	if req.Model == "" || err != nil {
+		http.Error(w, "model and non-empty input are required", http.StatusBadRequest)
+		return
+	}
+	if req.EncodingFormat != "" && !strings.EqualFold(req.EncodingFormat, "float") {
+		http.Error(w, "only encoding_format=float is supported", http.StatusBadRequest)
+		return
+	}
+
+	if s.requestTimeout > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
+		defer cancel()
+		r = r.WithContext(ctx)
+	}
+
+	privacyTier, err := requestEmbeddingPrivacyTier(r, req)
+	if err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{
+			"error": map[string]string{
+				"message": "privacy_tier must be one of private, community, public",
+				"type":    "invalid_privacy_tier",
+			},
+		})
+		return
+	}
+	modelResolution := s.modelCatalog.Resolve(req.Model)
+	promptTokens := estimateEmbeddingPromptTokens(input)
+	cid := consumerID(r.Context())
+	reservation, err := s.market.ReserveConsumerQuota(cid, int64(promptTokens))
+	if err != nil {
+		writeJSONStatus(w, http.StatusPaymentRequired, map[string]any{
+			"error": map[string]string{
+				"message": err.Error(),
+				"type":    "quota_exceeded",
+			},
+		})
+		return
+	}
+
+	requestID := "embd-" + randomID()
+	embedReq := protocol.EmbedRequest{
+		Model:       modelResolution.Target,
+		Input:       input,
+		PrivacyTier: privacyTier,
+	}
+	w.Header().Set("X-Mi-Privacy-Tier", privacyTier)
+	w.Header().Set("X-Mi-Usage-Source", "coordinator_estimate")
+	startedAt := time.Now()
+	result, err := s.registry.DispatchEmbedding(r.Context(), requestID, embedReq)
+	latency := time.Since(startedAt)
+	setEmbeddingDispatchHeaders(w, result)
+	if err != nil {
+		s.market.ReleaseReservation(reservation)
+		status := http.StatusBadGateway
+		if errors.Is(err, scheduler.ErrNoNode) {
+			status = http.StatusServiceUnavailable
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	done := protocol.InferDone{FinishReason: "stop", PromptTokens: promptTokens, OutputTokens: 0}
+	if err := s.market.RecordReserved(reservation, cid, result.ProviderID, done); err != nil {
+		log.Printf("record usage: %v", err)
+	}
+	if _, err := s.settlement.Record(settlement.RecordInput{
+		RequestID:        requestID,
+		ConsumerID:       cid,
+		ProviderID:       result.ProviderID,
+		NodeID:           result.NodeID,
+		Model:            req.Model,
+		PrivacyTier:      privacyTier,
+		Done:             done,
+		Latency:          latency,
+		DispatchAttempts: result.Attempts,
+	}); err != nil {
+		log.Printf("record settlement: %v", err)
+	}
+
+	data := make([]openai.EmbeddingData, 0, len(result.Result.Vectors))
+	for i, vector := range result.Result.Vectors {
+		data = append(data, openai.EmbeddingData{
+			Object:    "embedding",
+			Index:     i,
+			Embedding: vector,
+		})
+	}
+	writeJSON(w, openai.EmbeddingResponse{
+		Object: "list",
+		Data:   data,
+		Model:  req.Model,
+		Usage: openai.Usage{
+			PromptTokens:     promptTokens,
+			CompletionTokens: 0,
+			TotalTokens:      promptTokens,
+		},
+	})
 }
 
 func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string, reservation *city.QuotaReservation) {
@@ -1197,7 +1341,7 @@ func (s *server) nodeWebSocket(w http.ResponseWriter, r *http.Request) {
 			if msg.Heartbeat != nil {
 				s.registry.Heartbeat(*msg.Heartbeat)
 			}
-		case "chunk", "done", "error":
+		case "chunk", "done", "embeddings", "error":
 			nc.deliver(msg)
 		}
 	}
@@ -1250,6 +1394,41 @@ func (n *nodeConn) SendInference(ctx context.Context, requestID string, req prot
 					return protocol.InferDone{}, nodeInferenceError{message: msg.Error.Message, retryable: msg.Error.Retryable}
 				}
 				return protocol.InferDone{}, errors.New("node returned inference error")
+			}
+		}
+	}
+}
+
+func (n *nodeConn) SendEmbedding(ctx context.Context, requestID string, req protocol.EmbedRequest) (protocol.EmbedResult, error) {
+	ch := make(chan protocol.Envelope, 128)
+	n.mu.Lock()
+	n.pending[requestID] = ch
+	n.mu.Unlock()
+	defer func() {
+		n.mu.Lock()
+		delete(n.pending, requestID)
+		n.mu.Unlock()
+	}()
+
+	if err := n.write(ctx, protocol.Envelope{Version: protocol.Version, Type: "embed", RequestID: requestID, Embed: &req}); err != nil {
+		return protocol.EmbedResult{}, err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return protocol.EmbedResult{}, ctx.Err()
+		case msg := <-ch:
+			switch msg.Type {
+			case "embeddings":
+				if msg.Embeddings == nil {
+					return protocol.EmbedResult{}, errors.New("node returned empty embeddings result")
+				}
+				return *msg.Embeddings, nil
+			case "error":
+				if msg.Error != nil {
+					return protocol.EmbedResult{}, nodeInferenceError{message: msg.Error.Message, retryable: msg.Error.Retryable}
+				}
+				return protocol.EmbedResult{}, errors.New("node returned embedding error")
 			}
 		}
 	}
@@ -1393,11 +1572,31 @@ func setDispatchHeaders(w http.ResponseWriter, result scheduler.DispatchResult) 
 	}
 }
 
+func setEmbeddingDispatchHeaders(w http.ResponseWriter, result scheduler.EmbedDispatchResult) {
+	if result.Attempts > 0 {
+		w.Header().Set("X-Mi-Dispatch-Attempts", strconv.Itoa(result.Attempts))
+	}
+	if result.NodeID != "" {
+		w.Header().Set("X-Mi-Node-Id", result.NodeID)
+	}
+	if result.ProviderID != "" {
+		w.Header().Set("X-Mi-Provider-Id", result.ProviderID)
+	}
+}
+
 func requestPrivacyTier(r *http.Request, req openai.ChatCompletionRequest) (string, error) {
+	return requestPrivacyTierValue(r, req.PrivacyTier)
+}
+
+func requestEmbeddingPrivacyTier(r *http.Request, req openai.EmbeddingRequest) (string, error) {
+	return requestPrivacyTierValue(r, req.PrivacyTier)
+}
+
+func requestPrivacyTierValue(r *http.Request, value string) (string, error) {
 	if tier := r.Header.Get("X-Mi-Privacy-Tier"); tier != "" {
 		return privacy.NormalizeTier(tier)
 	}
-	return privacy.NormalizeTier(req.PrivacyTier)
+	return privacy.NormalizeTier(value)
 }
 
 func requestCapabilityValue(r *http.Request, header string, value string) string {
@@ -1448,6 +1647,40 @@ func estimateProtocolPromptTokens(req protocol.InferRequest) int {
 	chars := 0
 	for _, msg := range req.Messages {
 		chars += utf8.RuneCountInString(msg.Role) + utf8.RuneCountInString(msg.Content)
+	}
+	return estimateTokensFromChars(chars)
+}
+
+func parseEmbeddingInput(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "" {
+		return nil, errors.New("input is required")
+	}
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil {
+		if single == "" {
+			return nil, errors.New("input is required")
+		}
+		return []string{single}, nil
+	}
+	var many []string
+	if err := json.Unmarshal(raw, &many); err != nil {
+		return nil, err
+	}
+	if len(many) == 0 {
+		return nil, errors.New("input is required")
+	}
+	for _, value := range many {
+		if value == "" {
+			return nil, errors.New("input is required")
+		}
+	}
+	return many, nil
+}
+
+func estimateEmbeddingPromptTokens(input []string) int {
+	chars := 0
+	for _, text := range input {
+		chars += utf8.RuneCountInString(text)
 	}
 	return estimateTokensFromChars(chars)
 }

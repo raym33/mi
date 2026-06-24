@@ -876,6 +876,10 @@ func (noopNodeConn) SendInference(context.Context, string, protocol.InferRequest
 	return protocol.InferDone{}, nil
 }
 
+func (noopNodeConn) SendEmbedding(context.Context, string, protocol.EmbedRequest) (protocol.EmbedResult, error) {
+	return protocol.EmbedResult{Vectors: [][]float32{{1}}, PromptTokens: 1}, nil
+}
+
 func (noopNodeConn) Close() error {
 	return nil
 }
@@ -891,6 +895,10 @@ func (c challengeNodeConn) SendInference(_ context.Context, _ string, _ protocol
 		}
 	}
 	return protocol.InferDone{FinishReason: "stop", PromptTokens: 6, OutputTokens: 2}, nil
+}
+
+func (c challengeNodeConn) SendEmbedding(context.Context, string, protocol.EmbedRequest) (protocol.EmbedResult, error) {
+	return protocol.EmbedResult{Vectors: [][]float32{{1}}, PromptTokens: 1}, nil
 }
 
 func (c challengeNodeConn) Close() error {
@@ -912,6 +920,11 @@ func (c *scriptedProviderConn) SendInference(_ context.Context, _ string, _ prot
 	return protocol.InferDone{FinishReason: "stop", PromptTokens: 1, OutputTokens: 1}, nil
 }
 
+func (c *scriptedProviderConn) SendEmbedding(context.Context, string, protocol.EmbedRequest) (protocol.EmbedResult, error) {
+	c.calls++
+	return protocol.EmbedResult{Vectors: [][]float32{{1}}, PromptTokens: 1}, nil
+}
+
 func (c *scriptedProviderConn) Close() error {
 	return nil
 }
@@ -928,6 +941,10 @@ func (c maliciousUsageNodeConn) SendInference(_ context.Context, _ string, _ pro
 		}
 	}
 	return c.done, nil
+}
+
+func (c maliciousUsageNodeConn) SendEmbedding(context.Context, string, protocol.EmbedRequest) (protocol.EmbedResult, error) {
+	return protocol.EmbedResult{Vectors: [][]float32{{1}}, PromptTokens: c.done.PromptTokens}, nil
 }
 
 func (c maliciousUsageNodeConn) Close() error {
@@ -949,6 +966,10 @@ func (c *captureRequestConn) SendInference(_ context.Context, _ string, req prot
 	return protocol.InferDone{FinishReason: "stop", PromptTokens: 1, OutputTokens: 1}, nil
 }
 
+func (c *captureRequestConn) SendEmbedding(context.Context, string, protocol.EmbedRequest) (protocol.EmbedResult, error) {
+	return protocol.EmbedResult{Vectors: [][]float32{{1}}, PromptTokens: 1}, nil
+}
+
 func (c *captureRequestConn) Close() error {
 	return nil
 }
@@ -968,6 +989,10 @@ func (c *recordRequestIDConn) SendInference(_ context.Context, requestID string,
 		}
 	}
 	return protocol.InferDone{FinishReason: "stop", PromptTokens: 1, OutputTokens: 1}, nil
+}
+
+func (c *recordRequestIDConn) SendEmbedding(context.Context, string, protocol.EmbedRequest) (protocol.EmbedResult, error) {
+	return protocol.EmbedResult{Vectors: [][]float32{{1}}, PromptTokens: 1}, nil
 }
 
 func (c *recordRequestIDConn) Close() error {
