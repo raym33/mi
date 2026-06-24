@@ -14,6 +14,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Hash-chained settlement events for consumer debits and provider rewards.
 - Provider reputation from node health, cooldowns, completed events, tokens, and rewards.
 - Reputation-aware provider routing.
+- Coordinator-observed latency, TTFT, tokens/sec, and failure-rate routing signals.
 - Tamper-evident benchmark challenge events feeding provider reputation.
 - Optional synthetic benchmark runner for automatic provider evidence.
 - Coordinator-estimated usage accounting instead of worker-reported token billing.
@@ -31,7 +32,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 ## Next
 
 - Prometheus metrics for requests, tokens, nodes, errors, cooldowns, and provider usage.
-- Observed TTFT, tokens/sec, p95 latency, error-rate, and uptime in scheduler scoring.
+- P95 latency windows and uptime history in scheduler scoring.
 - Pricing rules per model, provider, and privacy tier.
 - Model-family tokenizers for exact coordinator-side accounting.
 - Provider payout reports and invoice exports.

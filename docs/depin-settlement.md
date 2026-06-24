@@ -112,7 +112,7 @@ The first reputation model uses objective local signals:
 - disabled provider state
 - benchmark challenge pass rate and score
 
-The coordinator refreshes provider scores before chat dispatch and synthetic challenges. The scheduler uses those scores as a routing penalty, so providers with weak challenge history, error streaks, cooldowns, or penalties are less likely to receive traffic when healthier eligible providers exist.
+The coordinator refreshes provider scores before chat dispatch and synthetic challenges. The scheduler uses those scores plus coordinator-observed latency, TTFT, estimated tokens/sec, and node failure rate as routing penalties, so providers with weak challenge history, error streaks, cooldowns, penalties, slow responses, or poor reliability are less likely to receive traffic when healthier eligible providers exist.
 
 This is intentionally off-chain and explainable. Later versions can add benchmarking, signed attestations, challenge jobs, staking, slashing, and public dashboards.
 

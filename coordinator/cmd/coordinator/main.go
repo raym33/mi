@@ -996,6 +996,15 @@ func setDispatchHeaders(w http.ResponseWriter, result scheduler.DispatchResult) 
 	if len(result.Accelerators) > 0 {
 		w.Header().Set("X-Mi-Accelerators", strings.Join(result.Accelerators, ","))
 	}
+	if result.LatencyMs > 0 {
+		w.Header().Set("X-Mi-Observed-Latency-Ms", strconv.FormatInt(result.LatencyMs, 10))
+	}
+	if result.TTFTMs > 0 {
+		w.Header().Set("X-Mi-Observed-TTFT-Ms", strconv.FormatInt(result.TTFTMs, 10))
+	}
+	if result.TokensPerSecond > 0 {
+		w.Header().Set("X-Mi-Observed-Tokens-Per-Second", strconv.FormatFloat(result.TokensPerSecond, 'f', 2, 64))
+	}
 }
 
 func requestPrivacyTier(r *http.Request, req openai.ChatCompletionRequest) (string, error) {
@@ -1084,6 +1093,9 @@ func declareDispatchTrailers(w http.ResponseWriter) {
 	w.Header().Add("Trailer", "X-Mi-Backend")
 	w.Header().Add("Trailer", "X-Mi-Device-Kind")
 	w.Header().Add("Trailer", "X-Mi-Accelerators")
+	w.Header().Add("Trailer", "X-Mi-Observed-Latency-Ms")
+	w.Header().Add("Trailer", "X-Mi-Observed-TTFT-Ms")
+	w.Header().Add("Trailer", "X-Mi-Observed-Tokens-Per-Second")
 }
 
 func setDispatchTrailers(w http.ResponseWriter, result scheduler.DispatchResult) {

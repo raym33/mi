@@ -52,7 +52,7 @@ Once the first chunk is emitted, the request is pinned to that node. If the node
 
 Nodes that fail before the first token enter a short cooldown. Repeated failures extend the cooldown up to a cap, and a successful request clears the node's error streak. This keeps an unstable Mac from being chosen first over and over while still letting it recover automatically.
 
-Provider reputation is also part of routing. The coordinator builds an explainable score from healthy nodes, cooldowns, error streaks, settlement history, SLA penalties, and challenge summaries, then passes per-provider scores to the scheduler. Lower scores add routing cost, so challenge failures and poor operating history affect future traffic instead of living only in the admin dashboard.
+Provider reputation is also part of routing. The coordinator builds an explainable score from healthy nodes, cooldowns, error streaks, settlement history, SLA penalties, and challenge summaries, then passes per-provider scores to the scheduler. The scheduler also records coordinator-observed latency, TTFT, estimated tokens/sec, and failure rate for each node. Lower scores and poor observed performance add routing cost, so challenge failures and slow or unreliable nodes affect future traffic instead of living only in the admin dashboard.
 
 Privacy tiers are enforced before scheduling. A node announces what it accepts, but the coordinator intersects that claim with the provider account policy before registration. A provider account marked `public` can serve `public` requests, but it is never selected for `private` or `community` requests. If no eligible node exists, the coordinator returns no-node availability instead of silently lowering privacy.
 
@@ -68,6 +68,9 @@ Responses include dispatch metadata:
 - `X-Mi-Device-Kind`
 - `X-Mi-Accelerators`
 - `X-Mi-Usage-Source`
+- `X-Mi-Observed-Latency-Ms`
+- `X-Mi-Observed-TTFT-Ms`
+- `X-Mi-Observed-Tokens-Per-Second`
 
 For streaming responses, those values are sent as HTTP trailers.
 
@@ -82,6 +85,12 @@ Admin node snapshots expose:
 - `device_vendor`
 - `soc`
 - `accelerators`
+- `completed_requests`
+- `failed_requests`
+- `failure_rate_bps`
+- `observed_latency_ms`
+- `observed_ttft_ms`
+- `observed_tokens_per_second`
 
 ## Backend And Hardware Metadata
 

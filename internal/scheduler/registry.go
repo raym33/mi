@@ -36,92 +36,120 @@ type Registry struct {
 }
 
 type Node struct {
-	ID              string
-	ProviderID      string
-	ProtocolVersion int
-	PublicName      string
-	City            string
-	PrivacyMode     string
-	PrivacyTiers    map[string]bool
-	Hostname        string
-	Backend         string
-	DeviceKind      string
-	DeviceVendor    string
-	DeviceModel     string
-	SoC             string
-	Accelerators    map[string]bool
-	PowerMode       string
-	NetworkMode     string
-	Models          map[string]bool
-	MaxConcurrent   int
-	Active          int
-	QueueDepth      int
-	MemoryFreeMB    uint64
-	LoadAverage     float64
-	LastSeen        time.Time
-	ErrorStreak     int
-	CooldownUntil   time.Time
-	LastError       string
-	Conn            NodeConn
+	ID                      string
+	ProviderID              string
+	ProtocolVersion         int
+	PublicName              string
+	City                    string
+	PrivacyMode             string
+	PrivacyTiers            map[string]bool
+	Hostname                string
+	Backend                 string
+	DeviceKind              string
+	DeviceVendor            string
+	DeviceModel             string
+	SoC                     string
+	Accelerators            map[string]bool
+	PowerMode               string
+	NetworkMode             string
+	Models                  map[string]bool
+	MaxConcurrent           int
+	Active                  int
+	QueueDepth              int
+	MemoryFreeMB            uint64
+	LoadAverage             float64
+	LastSeen                time.Time
+	ErrorStreak             int
+	CooldownUntil           time.Time
+	LastError               string
+	CompletedRequests       int64
+	FailedRequests          int64
+	PreTokenFailures        int64
+	PostTokenFailures       int64
+	ObservedLatencyMS       float64
+	ObservedTTFTMS          float64
+	ObservedTokensPerSecond float64
+	LastSuccessAt           time.Time
+	LastFailureAt           time.Time
+	Conn                    NodeConn
 }
 
 type NodeView struct {
-	ID              string    `json:"id"`
-	ProviderID      string    `json:"provider_id,omitempty"`
-	ProtocolVersion int       `json:"protocol_version,omitempty"`
-	PublicName      string    `json:"public_name,omitempty"`
-	City            string    `json:"city,omitempty"`
-	PrivacyMode     string    `json:"privacy_mode,omitempty"`
-	PrivacyTiers    []string  `json:"privacy_tiers,omitempty"`
-	Hostname        string    `json:"hostname"`
-	Backend         string    `json:"backend,omitempty"`
-	DeviceKind      string    `json:"device_kind,omitempty"`
-	DeviceVendor    string    `json:"device_vendor,omitempty"`
-	DeviceModel     string    `json:"device_model,omitempty"`
-	SoC             string    `json:"soc,omitempty"`
-	Accelerators    []string  `json:"accelerators,omitempty"`
-	PowerMode       string    `json:"power_mode,omitempty"`
-	NetworkMode     string    `json:"network_mode,omitempty"`
-	Models          []string  `json:"models"`
-	MaxConcurrent   int       `json:"max_concurrent"`
-	Active          int       `json:"active"`
-	QueueDepth      int       `json:"queue_depth"`
-	MemoryFreeMB    uint64    `json:"memory_free_mb"`
-	LoadAverage     float64   `json:"load_average"`
-	LastSeen        time.Time `json:"last_seen"`
-	Healthy         bool      `json:"healthy"`
-	ErrorStreak     int       `json:"error_streak,omitempty"`
-	CooldownUntil   time.Time `json:"cooldown_until,omitempty"`
-	LastError       string    `json:"last_error,omitempty"`
-	InCooldown      bool      `json:"in_cooldown"`
-	ProviderScore   int       `json:"provider_score,omitempty"`
+	ID                      string    `json:"id"`
+	ProviderID              string    `json:"provider_id,omitempty"`
+	ProtocolVersion         int       `json:"protocol_version,omitempty"`
+	PublicName              string    `json:"public_name,omitempty"`
+	City                    string    `json:"city,omitempty"`
+	PrivacyMode             string    `json:"privacy_mode,omitempty"`
+	PrivacyTiers            []string  `json:"privacy_tiers,omitempty"`
+	Hostname                string    `json:"hostname"`
+	Backend                 string    `json:"backend,omitempty"`
+	DeviceKind              string    `json:"device_kind,omitempty"`
+	DeviceVendor            string    `json:"device_vendor,omitempty"`
+	DeviceModel             string    `json:"device_model,omitempty"`
+	SoC                     string    `json:"soc,omitempty"`
+	Accelerators            []string  `json:"accelerators,omitempty"`
+	PowerMode               string    `json:"power_mode,omitempty"`
+	NetworkMode             string    `json:"network_mode,omitempty"`
+	Models                  []string  `json:"models"`
+	MaxConcurrent           int       `json:"max_concurrent"`
+	Active                  int       `json:"active"`
+	QueueDepth              int       `json:"queue_depth"`
+	MemoryFreeMB            uint64    `json:"memory_free_mb"`
+	LoadAverage             float64   `json:"load_average"`
+	LastSeen                time.Time `json:"last_seen"`
+	Healthy                 bool      `json:"healthy"`
+	ErrorStreak             int       `json:"error_streak,omitempty"`
+	CooldownUntil           time.Time `json:"cooldown_until,omitempty"`
+	LastError               string    `json:"last_error,omitempty"`
+	InCooldown              bool      `json:"in_cooldown"`
+	ProviderScore           int       `json:"provider_score,omitempty"`
+	CompletedRequests       int64     `json:"completed_requests,omitempty"`
+	FailedRequests          int64     `json:"failed_requests,omitempty"`
+	PreTokenFailures        int64     `json:"pre_token_failures,omitempty"`
+	PostTokenFailures       int64     `json:"post_token_failures,omitempty"`
+	FailureRateBPS          int64     `json:"failure_rate_bps,omitempty"`
+	ObservedLatencyMs       int64     `json:"observed_latency_ms,omitempty"`
+	ObservedTTFTMs          int64     `json:"observed_ttft_ms,omitempty"`
+	ObservedTokensPerSecond float64   `json:"observed_tokens_per_second,omitempty"`
+	LastSuccessAt           time.Time `json:"last_success_at,omitempty"`
+	LastFailureAt           time.Time `json:"last_failure_at,omitempty"`
 }
 
 type NetworkStatus struct {
-	Nodes             int      `json:"nodes"`
-	HealthyNodes      int      `json:"healthy_nodes"`
-	ActiveRequests    int      `json:"active_requests"`
-	MaxConcurrent     int      `json:"max_concurrent"`
-	AvailableSlots    int      `json:"available_slots"`
-	CooldownNodes     int      `json:"cooldown_nodes"`
-	TotalMemoryFreeMB uint64   `json:"total_memory_free_mb"`
-	Models            []string `json:"models"`
-	Cities            []string `json:"cities,omitempty"`
-	PrivacyTiers      []string `json:"privacy_tiers,omitempty"`
-	Backends          []string `json:"backends,omitempty"`
-	DeviceKinds       []string `json:"device_kinds,omitempty"`
-	Accelerators      []string `json:"accelerators,omitempty"`
-	SoCs              []string `json:"socs,omitempty"`
+	Nodes                  int      `json:"nodes"`
+	HealthyNodes           int      `json:"healthy_nodes"`
+	ActiveRequests         int      `json:"active_requests"`
+	MaxConcurrent          int      `json:"max_concurrent"`
+	AvailableSlots         int      `json:"available_slots"`
+	CooldownNodes          int      `json:"cooldown_nodes"`
+	TotalMemoryFreeMB      uint64   `json:"total_memory_free_mb"`
+	Models                 []string `json:"models"`
+	Cities                 []string `json:"cities,omitempty"`
+	PrivacyTiers           []string `json:"privacy_tiers,omitempty"`
+	Backends               []string `json:"backends,omitempty"`
+	DeviceKinds            []string `json:"device_kinds,omitempty"`
+	Accelerators           []string `json:"accelerators,omitempty"`
+	SoCs                   []string `json:"socs,omitempty"`
+	CompletedRequests      int64    `json:"completed_requests,omitempty"`
+	FailedRequests         int64    `json:"failed_requests,omitempty"`
+	AverageLatencyMs       int64    `json:"average_latency_ms,omitempty"`
+	AverageTTFTMs          int64    `json:"average_ttft_ms,omitempty"`
+	AverageTokensPerSecond float64  `json:"average_tokens_per_second,omitempty"`
 }
 
 type DispatchResult struct {
-	Done         protocol.InferDone
-	NodeID       string
-	ProviderID   string
-	Backend      string
-	DeviceKind   string
-	Accelerators []string
-	Attempts     int
+	Done            protocol.InferDone
+	NodeID          string
+	ProviderID      string
+	Backend         string
+	DeviceKind      string
+	Accelerators    []string
+	Attempts        int
+	LatencyMs       int64
+	TTFTMs          int64
+	OutputTokens    int
+	TokensPerSecond float64
 }
 
 type RetryableError interface {
@@ -284,35 +312,45 @@ func (r *Registry) Snapshot() []NodeView {
 		}
 		sort.Strings(accelerators)
 		out = append(out, NodeView{
-			ID:              node.ID,
-			ProviderID:      node.ProviderID,
-			ProtocolVersion: node.ProtocolVersion,
-			PublicName:      node.PublicName,
-			City:            node.City,
-			PrivacyMode:     node.PrivacyMode,
-			PrivacyTiers:    privacyTiers,
-			Hostname:        node.Hostname,
-			Backend:         node.Backend,
-			DeviceKind:      node.DeviceKind,
-			DeviceVendor:    node.DeviceVendor,
-			DeviceModel:     node.DeviceModel,
-			SoC:             node.SoC,
-			Accelerators:    accelerators,
-			PowerMode:       node.PowerMode,
-			NetworkMode:     node.NetworkMode,
-			Models:          models,
-			MaxConcurrent:   node.MaxConcurrent,
-			Active:          node.Active,
-			QueueDepth:      node.QueueDepth,
-			MemoryFreeMB:    node.MemoryFreeMB,
-			LoadAverage:     node.LoadAverage,
-			LastSeen:        node.LastSeen,
-			Healthy:         node.healthy(),
-			ErrorStreak:     node.ErrorStreak,
-			CooldownUntil:   node.CooldownUntil,
-			LastError:       node.LastError,
-			InCooldown:      node.inCooldown(time.Now()),
-			ProviderScore:   r.providerScoreLocked(node.ProviderID),
+			ID:                      node.ID,
+			ProviderID:              node.ProviderID,
+			ProtocolVersion:         node.ProtocolVersion,
+			PublicName:              node.PublicName,
+			City:                    node.City,
+			PrivacyMode:             node.PrivacyMode,
+			PrivacyTiers:            privacyTiers,
+			Hostname:                node.Hostname,
+			Backend:                 node.Backend,
+			DeviceKind:              node.DeviceKind,
+			DeviceVendor:            node.DeviceVendor,
+			DeviceModel:             node.DeviceModel,
+			SoC:                     node.SoC,
+			Accelerators:            accelerators,
+			PowerMode:               node.PowerMode,
+			NetworkMode:             node.NetworkMode,
+			Models:                  models,
+			MaxConcurrent:           node.MaxConcurrent,
+			Active:                  node.Active,
+			QueueDepth:              node.QueueDepth,
+			MemoryFreeMB:            node.MemoryFreeMB,
+			LoadAverage:             node.LoadAverage,
+			LastSeen:                node.LastSeen,
+			Healthy:                 node.healthy(),
+			ErrorStreak:             node.ErrorStreak,
+			CooldownUntil:           node.CooldownUntil,
+			LastError:               node.LastError,
+			InCooldown:              node.inCooldown(time.Now()),
+			ProviderScore:           r.providerScoreLocked(node.ProviderID),
+			CompletedRequests:       node.CompletedRequests,
+			FailedRequests:          node.FailedRequests,
+			PreTokenFailures:        node.PreTokenFailures,
+			PostTokenFailures:       node.PostTokenFailures,
+			FailureRateBPS:          node.failureRateBPS(),
+			ObservedLatencyMs:       int64(node.ObservedLatencyMS),
+			ObservedTTFTMs:          int64(node.ObservedTTFTMS),
+			ObservedTokensPerSecond: roundFloat(node.ObservedTokensPerSecond),
+			LastSuccessAt:           node.LastSuccessAt,
+			LastFailureAt:           node.LastFailureAt,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -331,6 +369,9 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 	accelerators := map[string]bool{}
 	socs := map[string]bool{}
 	status := NetworkStatus{Nodes: len(r.nodes)}
+	observedLatencyNodes := 0
+	observedTTFTNodes := 0
+	observedTPSNodes := 0
 	now := time.Now()
 	for _, node := range r.nodes {
 		if !node.healthy() {
@@ -344,6 +385,20 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 		status.ActiveRequests += node.Active
 		status.MaxConcurrent += node.MaxConcurrent
 		status.TotalMemoryFreeMB += node.MemoryFreeMB
+		status.CompletedRequests += node.CompletedRequests
+		status.FailedRequests += node.FailedRequests
+		if node.ObservedLatencyMS > 0 {
+			status.AverageLatencyMs += int64(node.ObservedLatencyMS)
+			observedLatencyNodes++
+		}
+		if node.ObservedTTFTMS > 0 {
+			status.AverageTTFTMs += int64(node.ObservedTTFTMS)
+			observedTTFTNodes++
+		}
+		if node.ObservedTokensPerSecond > 0 {
+			status.AverageTokensPerSecond += node.ObservedTokensPerSecond
+			observedTPSNodes++
+		}
 		if node.MaxConcurrent > node.Active {
 			status.AvailableSlots += node.MaxConcurrent - node.Active
 		}
@@ -397,6 +452,15 @@ func (r *Registry) NetworkStatus() NetworkStatus {
 	sort.Strings(status.DeviceKinds)
 	sort.Strings(status.Accelerators)
 	sort.Strings(status.SoCs)
+	if observedLatencyNodes > 0 {
+		status.AverageLatencyMs /= int64(observedLatencyNodes)
+	}
+	if observedTTFTNodes > 0 {
+		status.AverageTTFTMs /= int64(observedTTFTNodes)
+	}
+	if observedTPSNodes > 0 {
+		status.AverageTokensPerSecond = roundFloat(status.AverageTokensPerSecond / float64(observedTPSNodes))
+	}
 	return status
 }
 
@@ -421,17 +485,23 @@ func (r *Registry) dispatch(ctx context.Context, requestID string, req protocol.
 			return DispatchResult{Attempts: attempts}, err
 		}
 		attempts++
-		tracker := &firstChunkTracker{inner: sink}
+		tracker := newFirstChunkTracker(sink)
 		done, err := node.Conn.SendInference(ctx, requestID, req, tracker)
+		observation := tracker.observation()
 		r.release(node.ID)
 		if err == nil {
-			r.recordSuccess(node.ID)
-			return nodeDispatchResult(node, done, attempts), nil
+			r.recordSuccess(node.ID, observation)
+			return nodeDispatchResult(node, done, attempts, observation), nil
 		}
-		if tracker.sent || !canRetry(ctx, err) {
-			return nodeDispatchResult(node, protocol.InferDone{}, attempts), err
+		if tracker.sent {
+			r.recordPostTokenFailure(node.ID, err, observation)
+			return nodeDispatchResult(node, protocol.InferDone{}, attempts, observation), err
 		}
-		r.recordPreTokenFailure(node.ID, err)
+		if !canRetry(ctx, err) {
+			r.recordPreTokenTerminalFailure(node.ID, err, observation)
+			return nodeDispatchResult(node, protocol.InferDone{}, attempts, observation), err
+		}
+		r.recordPreTokenFailure(node.ID, err, observation)
 		attempted[node.ID] = true
 		lastErr = err
 	}
@@ -469,20 +539,24 @@ func (r *Registry) reserveFiltered(req protocol.InferRequest, exclude map[string
 	return selected, nil
 }
 
-func nodeDispatchResult(node *Node, done protocol.InferDone, attempts int) DispatchResult {
+func nodeDispatchResult(node *Node, done protocol.InferDone, attempts int, observation dispatchObservation) DispatchResult {
 	accelerators := make([]string, 0, len(node.Accelerators))
 	for accelerator := range node.Accelerators {
 		accelerators = append(accelerators, accelerator)
 	}
 	sort.Strings(accelerators)
 	return DispatchResult{
-		Done:         done,
-		NodeID:       node.ID,
-		ProviderID:   node.ProviderID,
-		Backend:      node.Backend,
-		DeviceKind:   node.DeviceKind,
-		Accelerators: accelerators,
-		Attempts:     attempts,
+		Done:            done,
+		NodeID:          node.ID,
+		ProviderID:      node.ProviderID,
+		Backend:         node.Backend,
+		DeviceKind:      node.DeviceKind,
+		Accelerators:    accelerators,
+		Attempts:        attempts,
+		LatencyMs:       observation.Latency.Milliseconds(),
+		TTFTMs:          observation.TTFT.Milliseconds(),
+		OutputTokens:    observation.OutputTokens,
+		TokensPerSecond: roundFloat(observation.TokensPerSecond),
 	}
 }
 
@@ -524,17 +598,20 @@ func (r *Registry) release(nodeID string) {
 	}
 }
 
-func (r *Registry) recordSuccess(nodeID string) {
+func (r *Registry) recordSuccess(nodeID string, observation dispatchObservation) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if node, ok := r.nodes[nodeID]; ok {
 		node.ErrorStreak = 0
 		node.CooldownUntil = time.Time{}
 		node.LastError = ""
+		node.CompletedRequests++
+		node.LastSuccessAt = time.Now()
+		node.recordObservation(observation)
 	}
 }
 
-func (r *Registry) recordPreTokenFailure(nodeID string, err error) {
+func (r *Registry) recordPreTokenFailure(nodeID string, err error, observation dispatchObservation) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	node, ok := r.nodes[nodeID]
@@ -542,12 +619,44 @@ func (r *Registry) recordPreTokenFailure(nodeID string, err error) {
 		return
 	}
 	node.ErrorStreak++
+	node.FailedRequests++
+	node.PreTokenFailures++
 	cooldown := baseErrorCooldown * time.Duration(node.ErrorStreak)
 	if cooldown > maxErrorCooldown {
 		cooldown = maxErrorCooldown
 	}
 	node.CooldownUntil = time.Now().Add(cooldown)
 	node.LastError = err.Error()
+	node.LastFailureAt = time.Now()
+	node.recordObservation(observation)
+}
+
+func (r *Registry) recordPostTokenFailure(nodeID string, err error, observation dispatchObservation) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	node, ok := r.nodes[nodeID]
+	if !ok {
+		return
+	}
+	node.FailedRequests++
+	node.PostTokenFailures++
+	node.LastError = err.Error()
+	node.LastFailureAt = time.Now()
+	node.recordObservation(observation)
+}
+
+func (r *Registry) recordPreTokenTerminalFailure(nodeID string, err error, observation dispatchObservation) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	node, ok := r.nodes[nodeID]
+	if !ok {
+		return
+	}
+	node.FailedRequests++
+	node.PreTokenFailures++
+	node.LastError = err.Error()
+	node.LastFailureAt = time.Now()
+	node.recordObservation(observation)
 }
 
 func (n *Node) healthy() bool {
@@ -578,7 +687,14 @@ func (r *Registry) nodeCostLocked(n *Node) float64 {
 	loadPenalty := n.LoadAverage
 	errorPenalty := float64(n.ErrorStreak) * 8
 	reputationPenalty := float64(100-r.providerScoreLocked(n.ProviderID)) / 5
-	return utilization*20 + queuePenalty + loadPenalty + errorPenalty + reputationPenalty
+	latencyPenalty := minFloat(n.ObservedLatencyMS/1000, 20)
+	ttftPenalty := minFloat(n.ObservedTTFTMS/500, 10)
+	throughputPenalty := 0.0
+	if n.ObservedTokensPerSecond > 0 {
+		throughputPenalty = maxFloat(0, 10-minFloat(n.ObservedTokensPerSecond, 10))
+	}
+	failurePenalty := float64(n.failureRateBPS()) / 10000 * 20
+	return utilization*20 + queuePenalty + loadPenalty + errorPenalty + reputationPenalty + latencyPenalty + ttftPenalty + throughputPenalty + failurePenalty
 }
 
 func (r *Registry) providerScoreLocked(providerID string) int {
@@ -609,14 +725,109 @@ func normalizeProtocolVersion(version int) int {
 	return version
 }
 
+type dispatchObservation struct {
+	Latency         time.Duration
+	TTFT            time.Duration
+	OutputTokens    int
+	TokensPerSecond float64
+}
+
 type firstChunkTracker struct {
-	inner StreamSink
-	sent  bool
+	inner        StreamSink
+	startedAt    time.Time
+	firstChunkAt time.Time
+	sent         bool
+	outputChars  int
+}
+
+func newFirstChunkTracker(inner StreamSink) *firstChunkTracker {
+	return &firstChunkTracker{inner: inner, startedAt: time.Now()}
 }
 
 func (s *firstChunkTracker) Chunk(content string) error {
-	s.sent = true
+	if !s.sent {
+		s.sent = true
+		s.firstChunkAt = time.Now()
+	}
+	s.outputChars += len(content)
 	return s.inner.Chunk(content)
+}
+
+func (s *firstChunkTracker) observation() dispatchObservation {
+	latency := time.Since(s.startedAt)
+	ttft := time.Duration(0)
+	if s.sent {
+		ttft = s.firstChunkAt.Sub(s.startedAt)
+	}
+	outputTokens := estimateTokensFromChars(s.outputChars)
+	return dispatchObservation{
+		Latency:         latency,
+		TTFT:            ttft,
+		OutputTokens:    outputTokens,
+		TokensPerSecond: observedTokensPerSecond(outputTokens, latency),
+	}
+}
+
+func (n *Node) recordObservation(observation dispatchObservation) {
+	if observation.Latency > 0 {
+		n.ObservedLatencyMS = ewma(n.ObservedLatencyMS, float64(observation.Latency.Milliseconds()))
+	}
+	if observation.TTFT > 0 {
+		n.ObservedTTFTMS = ewma(n.ObservedTTFTMS, float64(observation.TTFT.Milliseconds()))
+	}
+	if observation.TokensPerSecond > 0 {
+		n.ObservedTokensPerSecond = ewma(n.ObservedTokensPerSecond, observation.TokensPerSecond)
+	}
+}
+
+func (n *Node) failureRateBPS() int64 {
+	total := n.CompletedRequests + n.FailedRequests
+	if total <= 0 {
+		return 0
+	}
+	return n.FailedRequests * 10000 / total
+}
+
+func estimateTokensFromChars(chars int) int {
+	if chars <= 0 {
+		return 0
+	}
+	return (chars + 3) / 4
+}
+
+func observedTokensPerSecond(tokens int, latency time.Duration) float64 {
+	if tokens <= 0 || latency <= 0 {
+		return 0
+	}
+	return float64(tokens) / latency.Seconds()
+}
+
+func ewma(current float64, sample float64) float64 {
+	if sample <= 0 {
+		return current
+	}
+	if current <= 0 {
+		return sample
+	}
+	return current*0.8 + sample*0.2
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxFloat(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func roundFloat(value float64) float64 {
+	return float64(int(value*100)) / 100
 }
 
 func canRetry(ctx context.Context, err error) bool {

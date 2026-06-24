@@ -190,6 +190,50 @@ func TestProviderScoresInfluenceDispatch(t *testing.T) {
 	}
 }
 
+func TestDispatchRecordsObservedMetrics(t *testing.T) {
+	registry := NewRegistry()
+	conn := &scriptedConn{chunk: "abcdefgh", done: protocol.InferDone{FinishReason: "stop"}}
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"m"}}, conn)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-a", Models: []string{"m"}})
+
+	result, err := registry.Dispatch(context.Background(), "req", protocol.InferRequest{Model: "m"}, &collectTestSink{})
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if result.OutputTokens != 2 || result.TokensPerSecond <= 0 {
+		t.Fatalf("result metrics = %+v, want estimated output tokens and throughput", result)
+	}
+	node := registry.Snapshot()[0]
+	if node.CompletedRequests != 1 || node.FailedRequests != 0 || node.ObservedTokensPerSecond <= 0 {
+		t.Fatalf("node metrics = %+v, want one completed request with throughput", node)
+	}
+	status := registry.NetworkStatus()
+	if status.CompletedRequests != 1 || status.AverageTokensPerSecond <= 0 {
+		t.Fatalf("status metrics = %+v, want completed request and throughput", status)
+	}
+}
+
+func TestObservedPerformanceInfluencesDispatch(t *testing.T) {
+	registry := NewRegistry()
+	slow := &scriptedConn{chunk: "slow", done: protocol.InferDone{FinishReason: "stop"}}
+	fast := &scriptedConn{chunk: "fast", done: protocol.InferDone{FinishReason: "stop"}}
+	registry.Register(protocol.Register{NodeID: "node-slow", ProviderID: "provider-slow", Models: []string{"m"}}, slow)
+	registry.Register(protocol.Register{NodeID: "node-fast", ProviderID: "provider-fast", Models: []string{"m"}}, fast)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-slow", Models: []string{"m"}, LoadAverage: 0})
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-fast", Models: []string{"m"}, LoadAverage: 10})
+	registry.recordSuccess("node-slow", dispatchObservation{Latency: 3 * time.Second, TTFT: 2 * time.Second, OutputTokens: 10, TokensPerSecond: 1})
+	registry.recordSuccess("node-fast", dispatchObservation{Latency: 100 * time.Millisecond, TTFT: 50 * time.Millisecond, OutputTokens: 100, TokensPerSecond: 50})
+
+	sink := &collectTestSink{}
+	result, err := registry.Dispatch(context.Background(), "req", protocol.InferRequest{Model: "m"}, sink)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if result.NodeID != "node-fast" || sink.content != "fast" {
+		t.Fatalf("result = %+v content=%q, want observed fast node despite higher load", result, sink.content)
+	}
+}
+
 func TestDispatchDoesNotRetryAfterFirstChunk(t *testing.T) {
 	registry := NewRegistry()
 	first := &scriptedConn{chunk: "partial", err: errors.New("decode failed")}
