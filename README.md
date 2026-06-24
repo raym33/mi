@@ -1,55 +1,120 @@
 # mi
 
-Local-first distributed inference for Apple Silicon and future ARM edge fleets.
+Local-first distributed inference for Macs now, and heterogeneous edge compute later.
 
-`mi` turns a group of local machines into one OpenAI-compatible inference endpoint. It starts with Apple Silicon Macs, and the architecture is being shaped for future Android, Snapdragon, and Xiaomi edge nodes.
+`mi` turns a group of provider machines into one OpenAI-compatible inference endpoint. The first working target is Apple Silicon Macs running Ollama. The control plane is also being prepared for mixed fleets: Apple Silicon, Linux, Windows, CUDA servers, Snapdragon devices, and Android/Xiaomi nodes.
 
-The project is early, but the core control plane is already here: a coordinator, outbound node agents, OpenAI-compatible chat completions, model aliases, provider enrollment, quotas, usage accounting, TLS/mTLS, failover, cooldowns, and privacy tiers for rented compute.
+The project is an MVP, not a hosted marketplace. It already contains the core pieces needed to run a small private or community inference network: coordinator, outbound node agents, OpenAI-compatible chat completions, scheduling, account management, quotas, usage accounting, privacy tiers, SQLite/WAL persistence, TLS/mTLS examples, and tamper-evident settlement logs.
 
-## Why
+## What Problem It Solves
 
-Many organizations already own underused Apple Silicon machines. `mi` lets them pool that capacity.
+Small teams, schools, coworking spaces, agencies, clinics, and local communities often have underused machines but do not want to operate cloud GPU infrastructure or send every prompt to a third-party API.
 
-It helps with:
+`mi` gives them:
 
-- Local AI capacity for teams that want lower latency and more control.
-- Small-business inference without committing to cloud GPU infrastructure.
-- Shared city or coworking deployments where many users contribute or consume compute.
-- Rented public capacity for non-sensitive workloads.
-- Private routing for sensitive workloads that must stay on trusted nodes.
+- One local API endpoint for many machines.
+- OpenAI-style `/v1/chat/completions` for existing tools.
+- Private routing for sensitive work on trusted nodes.
+- Public/community routing for non-sensitive work on shared or rented capacity.
+- Quotas and usage visibility per consumer.
+- Provider accounting for internal credits, invoices, or future payouts.
+- A migration path from "my Macs" to a city-scale compute cooperative.
 
-## What It Does
+## Implemented Today
 
-- Exposes `/v1/chat/completions` and `/v1/models`.
-- Lets each provider machine connect outbound as a `node-agent`.
-- Serves local models through an inference backend abstraction. Ollama is supported today, with room for MLX, QNN, LiteRT, and Android runtimes later.
-- Routes by model availability, health, queue depth, capacity, cooldowns, privacy tier, and optional backend/hardware hints.
-- Retries another node when a provider fails before the first streamed token.
-- Tracks usage for both consumers and providers.
-- Supports API keys, provider tokens, quota limits, dynamic enrollment, rotation, and revocation.
-- Reserves quota before dispatch so concurrent requests cannot spend the same budget twice.
-- Records optional hash-chained settlement events for consumer debits and provider rewards.
-- Supports HTTPS/WSS and node mTLS.
-- Enforces provider-side privacy policy so public rented nodes never receive private prompts.
+Core API:
+
+- `POST /v1/chat/completions`
+- `GET /v1/models`
+- `GET /v1/models/catalog`
+- `GET /v1/me`
+- OpenAI-style streaming Server-Sent Events.
+- Stable model aliases such as `fast` or `private` mapped to concrete backend models.
+
+Coordinator and nodes:
+
+- Provider machines connect outbound to `GET /ws/node`; they do not need inbound ports.
+- Node agents currently serve models through Ollama.
+- Nodes advertise model IDs, backend type, hardware kind, vendor, SoC, accelerators, capacity, and privacy tiers.
+- The scheduler routes by model availability, health, queue depth, capacity, cooldowns, privacy tier, provider reputation, and optional hardware/backend hints.
+- Failover retries another node only before the first streamed token. After output starts, the request stays pinned to that node.
+
+City network mode:
+
+- Consumer accounts with API keys.
+- Provider accounts with provider tokens.
+- Dynamic enrollment, key rotation, token rotation, and disable operations through admin endpoints.
+- Quotas and pre-dispatch quota reservations, so concurrent requests cannot spend the same limit twice.
+- Coordinator-estimated usage accounting for consumers and providers.
+- SQLite/WAL persistence for city state.
+- Legacy JSON state remains supported for development.
+
+Settlement and reputation:
+
+- Optional tamper-evident settlement ledger for successful requests.
+- Records request metadata, coordinator-estimated tokens, latency, dispatch attempts, consumer debit, provider reward, SLA penalty, previous hash, and current hash.
+- SQLite/WAL settlement storage by default in city examples.
+- Legacy JSONL settlement chains remain supported.
+- Provider reputation from node health, cooldowns, error streaks, settlement history, rewards, SLA penalties, and challenge results.
+- Background reputation refresh outside the per-request hot path.
+- Coordinator-observed latency, TTFT, estimated tokens/sec, and failure rate feed scheduling cost.
+- Optional benchmark challenge chain and synthetic challenge runner.
+- `/admin/integrity` exports an anchor hash over settlement and challenge verification state.
+
+Security and privacy controls:
+
+- Consumer API keys.
+- Provider tokens.
+- Admin bearer token.
+- HTTPS/WSS examples.
+- Node mTLS example for `/ws/node`.
+- Coordinator-enforced privacy tiers: `private`, `community`, and `public`.
+- Public provider accounts cannot self-promote to private routing by editing node config.
+- Prompt bodies are not stored in settlement or challenge ledgers.
+
+Heterogeneous fleet groundwork:
+
+- Request hints: `mi_backend`, `mi_device_kind`, `mi_soc`, `mi_accelerators`.
+- Header hints: `X-Mi-Backend`, `X-Mi-Device-Kind`, `X-Mi-SoC`, `X-Mi-Accelerator`, `X-Mi-Accelerators`.
+- Node protocol version fields reserved for gradual agent upgrades.
+- Hardware metadata designed for future MLX, llama.cpp, QNN, LiteRT, CUDA, Linux, Windows, and Android agents.
+
+## Not Implemented Yet
+
+Be precise about the current trust model:
+
+- There is no built-in payment processor.
+- There is no trustless proof of inference.
+- Settlement is cooperative accounting, not a public blockchain.
+- Token accounting uses a coordinator-side heuristic, not exact model-family tokenizers.
+- Privacy tiers control where prompts are routed; they do not make prompts cryptographically invisible to the machine doing inference.
+- Ollama is the only implemented backend today.
+- MLX, Android, Snapdragon/QNN, LiteRT, CUDA, Linux, and Windows support are roadmap targets, not production backends in this repo yet.
+- There is no web dashboard yet; admin visibility is through JSON endpoints.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     C["OpenAI-compatible clients"] --> A["mi coordinator"]
+    A --> M["city accounts, quotas, privacy policy"]
     A --> S["scheduler"]
     S --> N1["Mac node-agent + Ollama"]
-    S --> N2["Mac node-agent + future MLX"]
-    S --> N3["Future Android/Xiaomi node + QNN/LiteRT"]
-    A --> L["usage ledger"]
+    S --> N2["Future MLX / llama.cpp node"]
+    S --> N3["Future Android / Snapdragon / CUDA node"]
+    A --> U["SQLite/WAL city state"]
+    A --> L["SQLite/WAL settlement ledger"]
+    A --> Q["challenge chain"]
 ```
 
 ## Requirements
 
+For the working Mac/Ollama path:
+
 - macOS on provider machines.
 - Apple Silicon recommended.
 - Go 1.25 or newer.
-- Ollama installed on each node.
+- Ollama installed and running on each provider node.
 - A local model, for example `llama3.1:8b`.
 
 Install the basics:
@@ -60,7 +125,7 @@ ollama serve
 ollama pull llama3.1:8b
 ```
 
-## Quickstart
+## Quickstart: One Coordinator, One Local Node
 
 Clone and build:
 
@@ -73,24 +138,23 @@ make build
 Run the coordinator:
 
 ```bash
-go run ./coordinator/cmd/coordinator -config configs/coordinator.yaml
+make run-coordinator
 ```
 
-Run a node agent on each Mac:
+In another terminal, run a node agent:
 
 ```bash
-go run ./node-agent/cmd/node-agent -config configs/node-agent.yaml
+make run-node
 ```
 
-Call the cluster:
+Call the endpoint:
 
 ```bash
 curl http://localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "fast",
-    "privacy_tier": "private",
-    "messages": [{"role": "user", "content": "Say hello from the Mac fleet"}],
+    "messages": [{"role": "user", "content": "Say hello from the local Mac fleet"}],
     "stream": true
   }'
 ```
@@ -101,93 +165,155 @@ Run the smoke test:
 make smoke
 ```
 
-## City Mode
+## Quickstart: City Mode
 
-City mode turns `mi` into a small local inference network with consumers, providers, provider tokens, API keys, quotas, and usage accounting. The city examples use SQLite/WAL for durable local state and settlement events.
+City mode enables accounts, provider tokens, quotas, privacy tiers, SQLite/WAL state, settlement events, and challenge evidence.
+
+Run the coordinator:
 
 ```bash
 make run-city-coordinator
+```
+
+Run a provider node:
+
+```bash
 make run-city-node
+```
+
+Call as a configured consumer:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H 'Authorization: Bearer sk-mi-studio-a-dev' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "fast",
+    "privacy_tier": "private",
+    "messages": [{"role": "user", "content": "Explain this local AI network in one sentence"}],
+    "stream": true
+  }'
+```
+
+Run the city smoke test:
+
+```bash
 make city-smoke
 ```
 
-Enroll accounts dynamically:
+City mode writes:
+
+- `data/mi-city.db` for consumers, providers, hashed secrets, quotas, and usage.
+- `data/mi-settlement.db` for settlement events.
+- `data/challenge-chain.jsonl` for benchmark challenge evidence.
+
+## Accounts And Enrollment
+
+Create a consumer:
+
+```bash
+curl http://localhost:8080/admin/consumers \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": "studio-b",
+    "display_name": "Studio B",
+    "total_token_limit": 250000
+  }'
+```
+
+Create a public provider:
+
+```bash
+curl http://localhost:8080/admin/providers \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": "neighbor-mac",
+    "display_name": "Neighbor Mac Studio",
+    "privacy_mode": "public"
+  }'
+```
+
+The returned API key or provider token is shown once. `mi` persists only SHA-256 hashes for dynamically generated secrets.
+
+Helper commands:
 
 ```bash
 CONSUMER_ID=studio-b make city-enroll
-PROVIDER_ID=neighbor-mac make city-enroll
+PROVIDER_PRIVACY_MODE=public PROVIDER_ID=neighbor-mac make city-enroll
 ACTION=rotate CONSUMER_ID=studio-b make city-enroll
 ACTION=disable PROVIDER_ID=neighbor-mac make city-enroll
 ```
 
-See [City Network](docs/city-network.md) and [Android And Xiaomi Roadmap](docs/android-xiaomi.md).
+## Privacy Tiers
 
-## Renting Compute Privately
+Requests default to `private`.
 
-`mi` supports privacy tiers for shared and rented compute:
+| Tier | Intended data | Eligible provider policy |
+| --- | --- | --- |
+| `private` | Sensitive customer, source, financial, health, or internal data | Trusted private providers only |
+| `community` | Known local group data | Private or community providers |
+| `public` | Non-sensitive prompts suitable for rented capacity | Private, community, or public providers |
 
-- `private`: sensitive data, routed only to trusted private nodes.
-- `community`: known shared networks, routed to private or community nodes.
-- `public`: non-sensitive prompts that can use rented public capacity.
+A provider configured as `public` can earn credits for public prompts, but it cannot receive private or community prompts.
 
-If `privacy_tier` is omitted, requests default to `private`.
+Important: privacy tiers are routing policy. A remote provider machine can still inspect prompts it receives. Sensitive work should use trusted nodes, mTLS, private networking, and operational controls until stronger confidential-compute designs exist.
 
-A public rented provider node can be configured with:
+## Admin Visibility
 
-```yaml
-privacy_mode: "public"
+```bash
+curl http://localhost:8080/network/status
+
+curl http://localhost:8080/admin/nodes \
+  -H 'Authorization: Bearer admin-dev-token'
+
+curl http://localhost:8080/admin/city \
+  -H 'Authorization: Bearer admin-dev-token'
+
+curl http://localhost:8080/admin/settlement \
+  -H 'Authorization: Bearer admin-dev-token'
+
+curl http://localhost:8080/admin/reputation \
+  -H 'Authorization: Bearer admin-dev-token'
+
+curl http://localhost:8080/admin/integrity \
+  -H 'Authorization: Bearer admin-dev-token'
 ```
 
-Set the same policy on the provider account in the coordinator. The coordinator enforces the provider account policy, so a node cannot elevate itself from `public` to `private` by changing its local config.
+## TLS And mTLS
 
-See [Renting Compute Privately](docs/rental-privacy.md).
-
-## Settlement And Rewards
-
-City deployments can enable a tamper-evident settlement chain. It records request metadata, coordinator-estimated token usage, latency, dispatch attempts, consumer debits, provider rewards, optional SLA penalties, and linked hashes without storing prompt bodies.
-
-Provider reputation combines node health, cooldowns, error streaks, completed settlement events, tokens served, accrued rewards, and benchmark challenge results. A background refresher feeds those scores to the scheduler, which also uses coordinator-observed latency, TTFT, throughput, and failure rate as routing signals.
-Benchmark challenge events can be recorded manually or by an optional synthetic runner in a separate hash-chain and feed provider reputation. Synthetic challenge requests avoid visible `challenge-` request IDs and obvious benchmark wording, but they are not yet cryptographically indistinguishable from normal traffic.
-
-See [DePIN Settlement And Rewards](docs/depin-settlement.md).
-
-## Security
-
-For real deployments, use HTTPS/WSS and node mTLS:
+Generate development certificates:
 
 ```bash
 make dev-certs
+```
+
+Run the TLS examples:
+
+```bash
 make run-city-coordinator-tls
 make run-city-node-tls
 ```
 
-See [Security](docs/security.md).
+Call the HTTPS endpoint:
 
-Admin endpoints require `admin_token` by default. For throwaway local development only, set `dev_admin_open: true`.
+```bash
+curl --cacert certs/ca.crt https://localhost:8443/network/status
+```
 
-Important: privacy tiers enforce scheduling policy. They do not make prompts cryptographically invisible to the machine performing inference. Sensitive prompts should only be routed to trusted nodes until stronger confidential-compute techniques are implemented.
+The TLS city example also enables node mTLS for `/ws/node`.
 
-## Project Status
+## Documentation
 
-`mi` is an MVP for local-first distributed inference. It is useful for experimentation, LAN deployments, and early community networks. It is not yet a complete payment network, hosted SaaS, trustless DePIN, or cryptographically private compute marketplace.
-
-The next major work is pricing, deeper observability, reputation tuning, installer polish, MLX-native inference, and stronger private-compute options.
-
-See [Roadmap](ROADMAP.md).
-
-## Contributing
-
-Contributions are welcome. The best current areas are:
-
-- macOS provider installation and LaunchAgent support.
-- Scheduler improvements and benchmarks.
-- Prometheus metrics and dashboard work.
-- MLX backend support.
-- Pricing and provider payout ledger design.
-- Security reviews.
-- Documentation and example deployments.
-
-See [Contributing](CONTRIBUTING.md).
+- [City Network Mode](docs/city-network.md): accounts, provider join flow, quotas, usage, privacy tiers, and admin operations.
+- [DePIN Settlement And Rewards](docs/depin-settlement.md): cooperative accounting, hash chains, rewards, reputation, challenges, and anchoring.
+- [Renting Compute Privately](docs/rental-privacy.md): how to rent public capacity while keeping private requests on trusted nodes.
+- [Security](docs/security.md): TLS/mTLS, auth layers, privacy limits, and settlement integrity.
+- [Design](docs/design.md): request flow, scheduler behavior, protocol metadata, and heterogeneous routing.
+- [Android And Xiaomi Roadmap](docs/android-xiaomi.md): future Snapdragon, Xiaomi, QNN, LiteRT, and Android agent strategy.
+- [Roadmap](ROADMAP.md): implemented work, next work, and open product questions.
+- [Contributing](CONTRIBUTING.md): development setup and contribution areas.
 
 ## Development
 
@@ -196,12 +322,14 @@ make test
 make build
 ```
 
-Useful commands:
+Useful checks:
 
 ```bash
+go fmt ./...
+go test ./...
+go test -race ./...
 make smoke
 make city-smoke
-make dev-certs
 ```
 
 ## License

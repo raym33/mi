@@ -1,44 +1,104 @@
-# DePIN settlement and rewards
+# DePIN Settlement And Rewards
 
-`mi` includes a local settlement chain for city-scale and rented-compute deployments.
+`mi` includes a cooperative settlement layer for city-scale and rented-compute deployments.
 
-The goal is not to put prompts on a public blockchain. The goal is to make usage, consumer debits, provider rewards, and audit state tamper-evident.
+The current goal is not to create a public token chain. The goal is to produce local, reviewable, tamper-evident records for usage, consumer debits, provider rewards, benchmark evidence, and later external anchoring.
 
-## What gets recorded
+## Current Status
 
-For every successful inference, the coordinator can append one settlement event:
+Implemented:
 
-- request ID
-- consumer ID
-- provider ID
-- node ID
-- model alias
-- privacy tier
-- prompt, completion, and total tokens estimated by the coordinator
-- latency and dispatch attempts
-- consumer debit in micros
-- provider reward in micros
-- latency penalty in micros, when configured
-- previous event hash
-- current event hash
+- Settlement events for successful inference requests.
+- Consumer debit calculation.
+- Provider reward calculation.
+- Optional latency/SLA penalty.
+- Hash-linked event chain.
+- SQLite/WAL storage through `settlement.sqlite_path`.
+- Legacy append-only JSONL storage through `settlement.chain_path`.
+- Verification endpoint for the settlement chain.
+- Benchmark challenge chain and verification endpoint.
+- Combined `/admin/integrity` manifest with one `anchor_hash`.
+- Provider reputation from settlement, health, cooldown, error, reward, penalty, and challenge signals.
 
-Prompt bodies are not recorded.
+Not implemented yet:
 
-The coordinator does not use worker-reported token counts for accounting. It estimates prompt usage from the request it received and completion usage from streamed chunks it relayed using a simple rune-count heuristic. This prevents a provider node from simply inflating `prompt_tokens` or `completion_tokens` in its final `done` message. The current estimate is intentionally simple and should be replaced by model-family tokenizers before real money settlement.
+- Wallets.
+- Stablecoin or fiat payouts.
+- On-chain transactions.
+- Provider staking or slashing.
+- Exact model-family tokenizers.
+- Signed provider receipts.
+- Proof-of-inference.
+- A dispute workflow.
 
-## Hash-chain design
+## What Gets Recorded
 
-Events are written to a JSONL file. Each event includes the previous event hash and its own SHA-256 hash. If someone modifies, deletes, or reorders an event, verification fails.
+For every successful inference, the coordinator can record one settlement event:
 
-This is intentionally a small local chain rather than a public token chain. It gives operators a clean path to:
+- Event index.
+- Record timestamp.
+- Request ID.
+- Consumer ID.
+- Provider ID.
+- Node ID.
+- Model ID or alias.
+- Privacy tier.
+- Prompt tokens estimated by the coordinator.
+- Completion tokens estimated by the coordinator.
+- Total tokens.
+- Latency in milliseconds.
+- Dispatch attempts.
+- Consumer debit in micros.
+- Provider reward in micros.
+- Provider latency penalty in micros, when configured.
+- Previous event hash.
+- Current event hash.
 
-- export invoices
-- calculate provider payouts
-- audit consumer usage
-- detect tampering
-- later anchor the latest hash to Ethereum, Solana, a rollup, or another settlement layer
+Prompt bodies and model outputs are not recorded in settlement events.
+
+## Accounting Model
+
+The coordinator does not trust worker-reported token counts for billing. It estimates prompt usage from the request it received and completion usage from streamed chunks it relayed.
+
+Today the estimate is intentionally simple:
+
+- Text is counted as Unicode runes.
+- Estimated tokens are roughly `runes / 4`, rounded up.
+- Requests that omit `max_tokens` receive a default output cap before dispatch.
+- Quota-limited consumers reserve an estimated budget before dispatch and reconcile when the request finishes.
+
+This reduces simple provider-side token inflation, but it is not exact tokenization. Real-money deployments should add model-family tokenizers and clear dispute rules.
+
+## Hash-Chain Design
+
+Each settlement event includes:
+
+- `previous_hash`
+- `hash`
+
+The event hash is computed from the event contents. Verification recomputes the chain in order.
+
+This detects:
+
+- Editing a recorded event.
+- Reordering events.
+- Removing an event from the middle while later events remain.
+- Changing token counts, prices, rewards, latency, or account IDs after the fact.
+
+This does not detect by itself:
+
+- A request that was never recorded.
+- Deleting the entire database.
+- Truncating the tail of the chain if there is no external anchor.
+- A malicious operator intentionally choosing not to run settlement.
+- Whether the model output was correct.
+- Whether a provider inspected a prompt it received.
+
+For payouts, back up the stores and periodically publish `/admin/integrity` `anchor_hash` to an external timestamping service, public chain, signed transparency log, or release artifact.
 
 ## Configuration
+
+Recommended city deployment:
 
 ```yaml
 settlement:
@@ -50,19 +110,34 @@ settlement:
   latency_penalty_bps: 1000
 ```
 
+Legacy JSONL mode:
+
+```yaml
+settlement:
+  enabled: true
+  chain_path: "data/settlement-chain.jsonl"
+```
+
 Fields:
 
-- `enabled`: turns settlement events on or off.
-- `sqlite_path`: SQLite/WAL settlement store path. This is recommended for city deployments.
+- `enabled`: records settlement events when true.
+- `sqlite_path`: SQLite/WAL store path. Recommended for city deployments.
 - `chain_path`: legacy append-only JSONL chain path, used when `sqlite_path` is empty.
-- `price_per_thousand_tokens_micros`: consumer debit rate per 1,000 tokens.
+- `price_per_thousand_tokens_micros`: consumer debit rate per 1,000 estimated tokens.
 - `provider_reward_share_bps`: provider share of the debit, in basis points.
 - `target_latency_ms`: soft SLA target for successful requests.
 - `latency_penalty_bps`: provider reward reduction when a successful request exceeds the target latency.
 
-Example: if coordinator-estimated total tokens are `1000`, price is `1000` micros, and provider share is `7000`, the consumer debit is `1000` micros and the base provider reward is `700` micros. If the request exceeds `target_latency_ms` and `latency_penalty_bps` is `1000`, the provider reward is reduced by 10%.
+Example:
 
-## Admin endpoints
+- Total estimated tokens: `1000`
+- Price: `1000` micros per 1,000 tokens
+- Provider share: `7000` bps, or 70%
+- Consumer debit: `1000` micros
+- Base provider reward: `700` micros
+- If latency exceeds the target and penalty is `1000` bps, provider reward is reduced by 10%
+
+## Admin Endpoints
 
 Inspect settlement state:
 
@@ -78,14 +153,14 @@ curl 'http://localhost:8080/admin/settlement?limit=5' \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
-Verify the hash chain:
+Verify the settlement chain:
 
 ```bash
 curl http://localhost:8080/admin/settlement/verify \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
-A healthy chain returns:
+Example healthy response:
 
 ```json
 {
@@ -95,6 +170,27 @@ A healthy chain returns:
 }
 ```
 
+Export the combined integrity manifest:
+
+```bash
+curl http://localhost:8080/admin/integrity \
+  -H 'Authorization: Bearer admin-dev-token'
+```
+
+The integrity response binds:
+
+- Settlement verification result.
+- Challenge verification result.
+- Settlement event count.
+- Challenge event count.
+- Latest settlement hash.
+- Latest challenge hash.
+- One compact `anchor_hash`.
+
+Publish `anchor_hash` externally before invoice runs, payout reviews, or dispute windows.
+
+## Provider Reputation
+
 Inspect provider reputation:
 
 ```bash
@@ -102,24 +198,34 @@ curl http://localhost:8080/admin/reputation \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
-The first reputation model uses objective local signals:
+The current reputation model uses explainable local signals:
 
-- active and healthy node count
-- cooldown status
-- recent node error streaks
-- completed settlement events
-- total served tokens
-- accrued provider rewards
-- disabled provider state
-- benchmark challenge pass rate and score
+- Healthy active node count.
+- Cooldown state.
+- Recent node error streaks.
+- Completed settlement events.
+- Total served tokens.
+- Accrued provider rewards.
+- Provider SLA penalties.
+- Disabled provider state.
+- Benchmark challenge pass rate.
+- Benchmark challenge score.
 
-The coordinator refreshes provider scores on a background interval and when the admin reputation endpoint is inspected, keeping reputation recomputation out of the per-request hot path. The scheduler uses those scores plus coordinator-observed latency, TTFT, estimated tokens/sec, and node failure rate as routing penalties, so providers with weak challenge history, error streaks, cooldowns, penalties, slow responses, or poor reliability are less likely to receive traffic when healthier eligible providers exist.
+The coordinator refreshes provider scores in the background and when the admin reputation endpoint is inspected. Scores are passed to the scheduler without recomputing the full settlement history on every request.
 
-This is intentionally off-chain and explainable. Later versions can add benchmarking, signed attestations, challenge jobs, staking, slashing, and public dashboards.
+The scheduler combines reputation with coordinator-observed node metrics:
 
-## Benchmark challenges
+- Latency.
+- Time to first token.
+- Estimated tokens per second.
+- Failure rate.
+- Queue and capacity pressure.
 
-Challenge events are a separate tamper-evident chain for provider benchmarking and anti-farming signals.
+Poor reliability, challenge failures, cooldowns, and slow responses therefore reduce future routing priority.
+
+## Benchmark Challenges
+
+Challenge events live in a separate tamper-evident chain.
 
 ```yaml
 challenges:
@@ -136,7 +242,7 @@ challenges:
   max_tokens: 8
 ```
 
-Record a manual challenge result:
+Record a manual challenge:
 
 ```bash
 curl -X POST http://localhost:8080/admin/challenges \
@@ -153,7 +259,7 @@ curl -X POST http://localhost:8080/admin/challenges \
   }'
 ```
 
-Run one synthetic challenge immediately:
+Run one synthetic challenge:
 
 ```bash
 curl -X POST http://localhost:8080/admin/challenges/run \
@@ -165,7 +271,7 @@ curl -X POST http://localhost:8080/admin/challenges/run \
   }'
 ```
 
-Target a specific provider during onboarding or dispute review:
+Target one provider:
 
 ```bash
 curl -X POST http://localhost:8080/admin/challenges/run \
@@ -178,7 +284,7 @@ curl -X POST http://localhost:8080/admin/challenges/run \
   }'
 ```
 
-Inspect and verify challenges:
+Inspect and verify:
 
 ```bash
 curl http://localhost:8080/admin/challenges \
@@ -188,39 +294,39 @@ curl http://localhost:8080/admin/challenges/verify \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
-Challenge summaries feed provider reputation. Providers with weak pass rates or low challenge scores receive lower reputation until their later performance improves. When `provider_id` is omitted, the synthetic runner rotates across eligible providers instead of always testing the cheapest current node. Synthetic challenge requests use normal chat-shaped request IDs and avoid obvious benchmark wording, but true indistinguishability still requires mixing verification into real traffic. Synthetic challenge records store pass/fail, score, node, provider, latency, and hash links, not model output.
+Challenge summaries feed provider reputation. Synthetic challenge requests use normal chat-shaped request IDs and avoid obvious benchmark wording, but true anti-farming requires mixing verification into real traffic, richer challenge sets, and dispute handling. Treat the current runner as operational evidence, not a trustless proof system.
 
-## Integrity anchor
+## Payment Path
 
-Export a combined integrity manifest before invoicing, payout review, or external anchoring:
+The current ledger is enough for cooperative accounting:
 
-```bash
-curl http://localhost:8080/admin/integrity \
-  -H 'Authorization: Bearer admin-dev-token'
-```
+1. Consumers use API keys with quotas.
+2. Providers accrue estimated rewards.
+3. The operator reviews `/admin/settlement`, `/admin/reputation`, and `/admin/integrity`.
+4. The operator exports invoices or pays providers off-platform.
+5. The operator anchors `anchor_hash` externally before finalizing a payout period.
 
-The response includes settlement verification, challenge verification, event counts, latest hashes, and one `anchor_hash` over the compact manifest. Publish that `anchor_hash` to an external timestamping system, public chain, signed transparency log, or release artifact. Later, the operator can recompute the same manifest from local chain files and prove whether payout inputs changed.
+Future payment work should add:
 
-## Payment roadmap
+- Pricing rules per model, provider, privacy tier, and latency class.
+- Consumer prepaid credits.
+- Provider payout reports.
+- Wallet addresses.
+- Stablecoin or fiat payout export.
+- Dispute windows.
+- Signed provider receipts.
+- Slashing or bond mechanisms for adversarial networks.
 
-The current settlement layer is cooperative accounting, not a payment processor or trustless proof-of-inference system.
+## Security Model
 
-Recommended path:
+Settlement proves only that recorded events have not changed relative to the local hash chain and any external anchors.
 
-1. Internal credits: consumers buy token credits, providers accrue rewards.
-2. Invoice export: operator pays providers off-platform.
-3. Stablecoin payout: map provider balances to wallet addresses.
-4. On-chain anchoring: periodically publish `/admin/integrity` `anchor_hash` to a public chain.
-5. Slashing and disputes: add signed provider claims, uptime proofs, automated challenge windows, and provider bonds.
-6. Stronger verification: add TEEs, signed node attestations, redaction, or proof-of-inference as those techniques mature.
+It does not prove:
 
-## Security model
+- The provider ran the claimed model correctly.
+- The provider did not inspect the prompt.
+- The hardware was confidential.
+- The operator recorded every eligible request.
+- The token estimate matched the exact model tokenizer.
 
-The chain proves that recorded settlement events were not tampered with after recording. It does not prove that:
-
-- the model output was correct
-- a provider did not inspect a public prompt it received
-- the hardware is confidential
-- the operator cannot choose not to record an event
-
-Those require additional controls such as mTLS, provider reputation, signed node binaries, trusted execution environments, external anchoring, or cryptographic inference proofs.
+For higher-trust or real-money deployments, combine settlement with mTLS, backups, external anchoring, model-specific tokenizers, signed releases, provider reputation, dispute workflows, and stronger private-compute techniques.

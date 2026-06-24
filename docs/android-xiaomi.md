@@ -1,117 +1,222 @@
 # Android And Xiaomi Roadmap
 
-`mi` should become a local ARM inference network, not a Mac-only tool. Apple Silicon is the first stable provider target, but Android phones and tablets can become useful edge nodes when the node-agent can run natively and advertise hardware capabilities.
+`mi` is not an Android inference runtime yet. The repo already has the control-plane hooks needed to add Android and Snapdragon nodes later: node hardware metadata, backend metadata, capability hints, privacy tiers, provider accounting, reputation, and settlement.
 
-## Product Role
+This document describes the intended path for Android, Snapdragon, and Xiaomi chips.
 
-Android nodes should be treated differently from always-on Macs:
+## Current Repo Support
 
-- `mobile-burst`: opportunistic public or community jobs while charging on Wi-Fi.
-- `edge-private-owned`: the user's own phone serving that user's private local tasks.
-- `city-opportunistic`: many local devices contributing small amounts of non-sensitive compute.
+Implemented today:
 
-Avoid strong SLAs or sensitive third-party private prompts on untrusted phones until there is stronger isolation, signed agent distribution, and better device attestation.
+- Node metadata fields for `hardware.kind`, `vendor`, `model`, `soc`, `accelerators`, `power_mode`, and `network_mode`.
+- Backend metadata through `backend.type`.
+- Request routing hints for backend, device kind, SoC, and accelerators.
+- Privacy tiers so mobile/public nodes can be limited to non-sensitive workloads.
+- Provider reputation and challenge evidence that can later be segmented by backend.
+- Protocol version fields reserved for gradual agent upgrades.
 
-## Supported Classes
+Not implemented today:
 
-### Xiaomi Snapdragon
+- Native Android node app.
+- QNN backend.
+- LiteRT backend.
+- ExecuTorch backend.
+- Vulkan llama.cpp backend.
+- Mobile power, thermal, or charging policy enforcement.
+- Android attestation.
+- App signing and distribution flow.
 
-Recent Xiaomi flagships such as Xiaomi 15 and Xiaomi 15 Ultra use Snapdragon 8 Elite with Qualcomm AI Engine. These are the best Xiaomi Android candidates for serious local inference because Qualcomm exposes a mature acceleration stack.
+## Product Role For Android Nodes
 
-Recommended backend order:
+Android devices should not be treated like always-on Macs.
 
-1. `ort-qnn`: ONNX Runtime QNN Execution Provider over Qualcomm AI Engine Direct for Hexagon NPU, Adreno GPU, or CPU fallback.
-2. `litert-qnn`: Android-first LiteRT path when Qualcomm NPU delegates are available for the target model.
-3. `executorch-qnn`: future PyTorch-edge path for QNN.
-4. `llamacpp-vulkan`: portable fallback on Adreno GPU.
+Useful roles:
+
+- `mobile-burst`: opportunistic public jobs while charging, on Wi-Fi, and thermally healthy.
+- `edge-private-owned`: the user's own phone serving the user's own private local tasks.
+- `city-opportunistic`: many known local devices contributing small amounts of non-sensitive compute.
+- `field-edge`: local inference near cameras, sensors, or offline workflows.
+
+Avoid sensitive third-party private prompts on untrusted phones until there is stronger isolation, signed agent distribution, device attestation, and clearer user consent.
+
+## Xiaomi And Snapdragon Targets
+
+As of June 2026, official Xiaomi global pages list:
+
+- Xiaomi 17 and Xiaomi 17 Ultra with Snapdragon 8 Elite Gen 5.
+- Xiaomi 15 and Xiaomi 15 Ultra with Snapdragon 8 Elite.
+- Xiaomi XRING O1 as Xiaomi's self-developed 3 nm Arm-based SoC, used in devices such as Xiaomi Pad 7S Pro and earlier XRing launches.
+
+Practical implication:
+
+- Snapdragon devices should use Qualcomm-specific acceleration paths first.
+- XRing devices should be treated as a separate Arm/Mali/Android target.
+- Do not assume Qualcomm QNN works on XRing hardware.
+
+## Recommended Backend Order: Snapdragon
+
+For Snapdragon 8 Elite and Snapdragon 8 Elite Gen 5 devices:
+
+1. `ort-qnn`: ONNX Runtime with QNN Execution Provider for Qualcomm acceleration.
+2. `litert-qnn`: LiteRT path when a Qualcomm delegate is available for the model.
+3. `executorch-qnn`: PyTorch-edge path if QNN support is mature for the target model.
+4. `llamacpp-vulkan`: portable Adreno GPU fallback for GGUF-style models.
 5. `cpu-arm64`: last-resort fallback for small models and diagnostics.
 
-### Xiaomi XRing
-
-Xiaomi's XRing chips are strategically important, but they should be treated as a separate target from Snapdragon. Until Xiaomi exposes a public, stable NPU SDK/delegate suitable for third-party LLM serving, the practical path is:
-
-1. `litert-npu` if Xiaomi exposes compatible NPU support.
-2. `litert-gpu` for Android-native GPU acceleration.
-3. `llamacpp-vulkan` on Arm Mali/Immortalis GPUs.
-4. `cpu-arm64` fallback.
-
-Do not assume Qualcomm QNN support on XRing. QNN is for Qualcomm Snapdragon hardware.
-
-## Runtime Strategy
-
-The node-agent now has a backend abstraction. Ollama is the first backend, but the config can describe future Android runtimes:
+Advertised node profile:
 
 ```yaml
 backend:
   type: "ort-qnn"
-  url: ""
 hardware:
   kind: "android"
   vendor: "xiaomi"
-  model: "xiaomi_15_ultra"
-  soc: "snapdragon_8_elite"
+  model: "xiaomi_17_ultra"
+  soc: "snapdragon_8_elite_gen_5"
   accelerators: ["hexagon_npu", "adreno", "cpu"]
   power_mode: "charging_only"
   network_mode: "wifi_only"
 ```
 
-The coordinator stores and exposes this metadata through node snapshots, network status, and reputation reports. Requests can already ask for `mi_backend`, `mi_device_kind`, `mi_soc`, and `mi_accelerators`, so early Android/Snapdragon experiments can be routed explicitly without changing the public OpenAI-compatible endpoint. Node WebSocket messages carry `version` and `protocol_version` fields so Android, Snapdragon, Apple Silicon, CUDA, Linux, and Windows agents can evolve without forcing every node to update at once.
-
-Example request for a future Xiaomi Snapdragon QNN node:
+Example request:
 
 ```json
 {
   "model": "fast",
   "mi_backend": "ort-qnn",
   "mi_device_kind": "android",
-  "mi_soc": "snapdragon_8_elite",
+  "mi_soc": "snapdragon_8_elite_gen_5",
   "mi_accelerators": ["hexagon_npu"],
-  "messages": [{"role": "user", "content": "Run this on the phone NPU"}]
+  "messages": [{"role": "user", "content": "Run this on a Snapdragon NPU node"}]
 }
 ```
 
-Future scheduling can also route by power mode, thermal state, price, and challenge score.
+## Recommended Backend Order: Xiaomi XRing
 
-## Android Agent Plan
+For XRing devices:
 
-The future Android node should be a native app, not a desktop Go binary running under a terminal:
+1. `litert-npu`: only if Xiaomi exposes a stable Android NPU delegate suitable for third-party apps.
+2. `litert-gpu`: Android GPU delegate path where supported.
+3. `llamacpp-vulkan`: Vulkan path on Arm Mali/Immortalis GPUs.
+4. `cpu-arm64`: fallback for small models and health checks.
 
-1. Kotlin foreground service that keeps an outbound WebSocket to the coordinator.
-2. Work only when policy allows: charging, Wi-Fi, thermal state normal, battery above threshold.
-3. Local backend bridge implemented through JNI or native libraries.
-4. Secure enrollment using provider token, optional device attestation, and signed app distribution.
-5. No prompt logging; only request IDs, model IDs, timing, backend, and accelerator metadata.
+Advertised node profile:
+
+```yaml
+backend:
+  type: "llamacpp-vulkan"
+hardware:
+  kind: "android"
+  vendor: "xiaomi"
+  model: "xiaomi_pad_7s_pro"
+  soc: "xring_o1"
+  accelerators: ["mali_immortalis", "cpu"]
+  power_mode: "charging_only"
+  network_mode: "wifi_only"
+```
+
+QNN should not be listed unless the device is actually Qualcomm Snapdragon hardware.
+
+## Android Agent Design
+
+The Android node should be a native app, not a terminal Go binary.
+
+Recommended architecture:
+
+1. Kotlin foreground service maintains an outbound WebSocket to the coordinator.
+2. Work policy only allows jobs when charging, on Wi-Fi, battery is above threshold, and thermal state is acceptable.
+3. Native backend bridge uses JNI, AAR, or packaged runtime libraries.
+4. The app exposes no inbound network port.
+5. Enrollment uses provider token, QR link, or one-time join code.
+6. Optional Android device attestation is recorded during enrollment.
+7. Logs contain request IDs, model IDs, timings, backend, and accelerator metadata, not prompt bodies.
+8. The app reports thermal, battery, charging, and network state in heartbeats.
+
+## Scheduler Policy For Mobile Nodes
+
+Mobile nodes should get stricter policy than desktops:
+
+- Default to `public` unless owned by the same user.
+- Prefer charging and Wi-Fi state.
+- Avoid long generations.
+- Apply lower concurrency.
+- Use smaller models.
+- Penalize thermal throttling.
+- Track challenge scores by backend and SoC.
+- Avoid strong latency SLAs unless the device is pinned, powered, and cooled.
+
+Future scheduler fields may include:
+
+- Battery percentage.
+- Charging state.
+- Thermal state.
+- Metered network state.
+- Estimated energy cost.
+- User availability window.
 
 ## Model Packaging
 
-Model artifacts will differ by backend:
+Different backends need different model artifacts:
 
-- Ollama and llama.cpp usually use GGUF-like packaging.
-- ONNX Runtime QNN requires ONNX assets prepared for QNN, often quantized and compiled with Qualcomm tooling.
-- LiteRT requires LiteRT/TFLite assets and delegates.
-- MediaPipe LLM uses its own task packaging.
+- Ollama usually uses local Ollama model names.
+- llama.cpp/Vulkan usually uses GGUF-style artifacts.
+- ONNX Runtime QNN needs ONNX models prepared and often quantized for QNN.
+- LiteRT needs LiteRT/TFLite artifacts and compatible delegates.
+- ExecuTorch needs exported PyTorch-edge artifacts.
 
-`mi` aliases should map a user-facing model ID to platform-specific concrete IDs. Future platform-aware aliases can map `fast` to `llama3.1:8b` on Mac/Ollama, `llama3.2-3b-qnn` on Snapdragon/QNN, and a LiteRT model on XRing.
+`mi` model aliases should stay stable while mapping to platform-specific targets:
+
+```yaml
+models:
+  aliases:
+    - id: "fast"
+      target: "llama3.1:8b"
+```
+
+Future platform-aware aliasing could map:
+
+- `fast` on Mac/Ollama -> `llama3.1:8b`
+- `fast` on Mac/MLX -> `llama-3.1-8b-mlx`
+- `fast` on Snapdragon/QNN -> `llama-3.2-3b-qnn`
+- `fast` on XRing/Vulkan -> `small-gguf-vulkan`
 
 ## Challenge Jobs
 
-Benchmark challenges should be platform-specific:
+Challenge labels should include platform and backend:
 
+- `mac-ollama-metal`
+- `mac-mlx`
 - `android-ort-qnn`
 - `android-litert-gpu`
 - `android-llamacpp-vulkan`
-- `mac-ollama-metal`
-- `mac-mlx`
+- `linux-cuda-vllm`
+- `windows-snapdragon-qnn`
 
-Provider reputation should eventually break out pass rate, latency, and score by backend. This prevents a provider from passing easy CPU checks while advertising accelerated capacity.
+Provider reputation should eventually separate pass rate, latency, throughput, and failure rate by backend and hardware class. A provider that passes CPU checks should not automatically be trusted for accelerated NPU capacity.
+
+## Implementation Steps
+
+1. Add a minimal Android app shell with foreground service and outbound WebSocket.
+2. Reuse the existing node registration and heartbeat protocol.
+3. Report Android power, network, and thermal metadata.
+4. Add a CPU-only diagnostic backend first.
+5. Add llama.cpp/Vulkan for portable GPU experiments.
+6. Add ONNX Runtime QNN for Snapdragon devices.
+7. Add LiteRT experiments for Android-native delegates.
+8. Add provider enrollment links or QR codes.
+9. Add Android-specific challenge jobs.
+10. Add signed app distribution and optional attestation before untrusted rental.
 
 ## References
 
-- [Xiaomi 15 official specs](https://www.mi.com/global/product/xiaomi-15/specs/): Snapdragon 8 Elite and Qualcomm AI Engine.
-- [Xiaomi 15 Ultra official specs](https://www.mi.com/global/product/xiaomi-15-ultra/specs/): Snapdragon 8 Elite and Qualcomm AI Engine.
-- [Android NNAPI migration guide](https://developer.android.com/ndk/guides/neuralnetworks/migration-guide): NNAPI is deprecated in Android 15.
-- [Google LiteRT](https://developers.google.com/edge/litert): current Android on-device ML runtime direction.
-- [LiteRT NPU delegate](https://developers.google.com/edge/litert/android/npu/overview): Android NPU acceleration path.
-- [ONNX Runtime QNN Execution Provider](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html): Qualcomm acceleration on Android and Windows Snapdragon.
-- [Qualcomm AI Hub](https://aihub.qualcomm.com/): model optimization and profiling for Qualcomm devices.
-- [Qualcomm AI Engine Direct SDK](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk): lower-level access to Qualcomm CPU, Adreno GPU, and Hexagon NPU.
+- [Xiaomi 17 specs](https://www.mi.com/global/product/xiaomi-17/)
+- [Xiaomi 17 Ultra specs](https://www.mi.com/global/product/xiaomi-17-ultra/)
+- [Xiaomi 15 specs](https://www.mi.com/global/product/xiaomi-15/specs/)
+- [Xiaomi 15 Ultra specs](https://www.mi.com/global/product/xiaomi-15-ultra/specs/)
+- [Xiaomi XRING O1 overview](https://www.mi.com/global/discover/article?id=4926)
+- [Android NNAPI migration guide](https://developer.android.com/ndk/guides/neuralnetworks/migration-guide)
+- [Google LiteRT](https://developers.google.com/edge/litert)
+- [LiteRT NPU delegate](https://developers.google.com/edge/litert/android/npu/overview)
+- [ONNX Runtime QNN Execution Provider](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)
+- [Qualcomm AI Hub](https://aihub.qualcomm.com/)
+- [Qualcomm AI Engine Direct SDK](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk)
