@@ -277,8 +277,11 @@ boundary with a known exit, not as a dead end.
 For convenience, the honest list a reviewer should check against the code:
 
 1. Single coordinator: SPOF and single source of truth; no HA in-tree yet (§10).
-2. Billing is not crash-transactional; no idempotency key / intent log (§10).
-3. No graceful shutdown / signal handling (§10).
+2. Billing is not fully crash-transactional across the usage and settlement
+   ledgers. Idempotency keys (charge-at-most-once per request) are implemented;
+   the remaining cross-ledger atomicity is designed in
+   [docs/atomicity-design.md](docs/atomicity-design.md) but not yet implemented.
+3. Graceful shutdown (SIGTERM drain) and signal handling are implemented.
 4. Metering is `bytes/4`, not tokenizer parity; not safe for real money (§7).
 5. Privacy tiers are routing, not encryption from the executor (§6).
 6. Protocol `version` is reserved but not negotiated; protocol is v0 (§11).
