@@ -95,6 +95,9 @@ Be precise about the current trust model:
 
 ## Architecture
 
+For the full design — trust model, failure semantics, scaling decision, and
+deliberate tradeoffs — see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ```mermaid
 flowchart LR
     C["OpenAI-compatible clients"] --> A["mi coordinator"]
