@@ -64,7 +64,7 @@ func newE2EServer(t *testing.T, adminToken string) (*server, *httptest.Server) {
 
 // dialE2ENode connects a node over a real WebSocket, registers it, and answers
 // each infer request with a streamed chunk and a done frame, like the node-agent.
-func dialE2ENode(t *testing.T, ctx context.Context, ts *httptest.Server, nodeID, providerID, model, content string, maxConcurrent int) *websocket.Conn {
+func dialE2ENode(t *testing.T, ctx context.Context, ts *httptest.Server, nodeID, providerID, model, content string, maxConcurrent int, privacyMode string) *websocket.Conn {
 	t.Helper()
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/node"
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
@@ -77,7 +77,7 @@ func dialE2ENode(t *testing.T, ctx context.Context, ts *httptest.Server, nodeID,
 		Register: &protocol.Register{
 			NodeID:        nodeID,
 			ProviderID:    providerID,
-			PrivacyMode:   "private",
+			PrivacyMode:   privacyMode,
 			Models:        []string{model},
 			MaxConcurrent: maxConcurrent,
 		},
@@ -146,7 +146,7 @@ func TestEndToEndChatOverWebSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	conn := dialE2ENode(t, ctx, ts, "e2e-node", "e2e-provider", "e2e-model", "hello from e2e node", 1)
+	conn := dialE2ENode(t, ctx, ts, "e2e-node", "e2e-provider", "e2e-model", "hello from e2e node", 1, "private")
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	waitFor(t, 5*time.Second, func() bool { return hasModel(s, "e2e-model") })
@@ -175,7 +175,7 @@ func TestEndToEndOperatorEndpointsReflectTraffic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	conn := dialE2ENode(t, ctx, ts, "ops-node", "ops-provider", "ops-model", "served", 1)
+	conn := dialE2ENode(t, ctx, ts, "ops-node", "ops-provider", "ops-model", "served", 1, "private")
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	waitFor(t, 5*time.Second, func() bool { return hasModel(s, "ops-model") })
@@ -221,7 +221,7 @@ func TestEndToEndConcurrentChats(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	conn := dialE2ENode(t, ctx, ts, "load-node", "load-provider", "load-model", "ok", 32)
+	conn := dialE2ENode(t, ctx, ts, "load-node", "load-provider", "load-model", "ok", 32, "private")
 	defer conn.Close(websocket.StatusNormalClosure, "")
 	waitFor(t, 5*time.Second, func() bool { return hasModel(s, "load-model") })
 
