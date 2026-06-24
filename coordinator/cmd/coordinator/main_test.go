@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/csv"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"github.com/raym33/mi/internal/challenge"
 	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/config"
+	"github.com/raym33/mi/internal/idempotency"
 	"github.com/raym33/mi/internal/modelcatalog"
 	"github.com/raym33/mi/internal/openai"
 	"github.com/raym33/mi/internal/protocol"
@@ -92,6 +94,155 @@ func TestAdminRequiresTokenUnlessDevOpen(t *testing.T) {
 	}
 }
 
+func TestAdminPayoutsCSVRequiresAdminAndExportsBalances(t *testing.T) {
+	market, err := city.New(config.CityConfig{
+		Enabled: true,
+		Providers: []config.ProviderAccount{{
+			ID:          "provider-a",
+			DisplayName: "Provider A",
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	settlements, err := settlement.New(config.SettlementConfig{
+		Enabled:                      true,
+		PricePerThousandTokensMicros: 1000,
+		ProviderRewardShareBPS:       7000,
+	})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	if _, err := settlements.Record(settlement.RecordInput{
+		RequestID:  "req-1",
+		ConsumerID: "consumer-a",
+		ProviderID: "provider-a",
+		Model:      "llama3.1:8b",
+		Done:       protocol.InferDone{PromptTokens: 1200, OutputTokens: 800},
+		Latency:    25 * time.Millisecond,
+	}); err != nil {
+		t.Fatalf("record settlement: %v", err)
+	}
+	s := &server{market: market, settlement: settlements, adminToken: "admin-test"}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /admin/payouts.csv", s.requireAdmin(s.adminPayoutsCSV))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/payouts.csv", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized payout csv status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/payouts.csv", nil)
+	req.Header.Set("Authorization", "Bearer admin-test")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("payout csv status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/csv; charset=utf-8" {
+		t.Fatalf("content-type = %q, want text/csv; charset=utf-8", got)
+	}
+	if got := rec.Header().Get("Content-Disposition"); got != `attachment; filename="mi-payouts.csv"` {
+		t.Fatalf("content-disposition = %q, want payout attachment", got)
+	}
+
+	rows, err := csv.NewReader(strings.NewReader(rec.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("read csv: %v: %s", err, rec.Body.String())
+	}
+	if len(rows) != 2 {
+		t.Fatalf("csv rows = %+v, want header and one provider row", rows)
+	}
+	wantHeader := []string{"provider_id", "display_name", "events", "total_tokens", "avg_latency_ms", "reward_micros", "penalty_micros"}
+	if len(rows[0]) != len(wantHeader) {
+		t.Fatalf("csv header = %+v, want %+v", rows[0], wantHeader)
+	}
+	for i := range wantHeader {
+		if rows[0][i] != wantHeader[i] {
+			t.Fatalf("csv header = %+v, want %+v", rows[0], wantHeader)
+		}
+	}
+	wantRow := []string{"provider-a", "Provider A", "1", "2000", "25", "1400", "0"}
+	if len(rows[1]) != len(wantRow) {
+		t.Fatalf("csv provider row = %+v, want %+v", rows[1], wantRow)
+	}
+	for i := range wantRow {
+		if rows[1][i] != wantRow[i] {
+			t.Fatalf("csv provider row = %+v, want %+v", rows[1], wantRow)
+		}
+	}
+}
+
+func TestAdminMetricsRequiresAdminAndExportsPrometheus(t *testing.T) {
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{
+		NodeID:        "node-a",
+		ProviderID:    "provider-a",
+		Hostname:      "node-a.local",
+		Backend:       "ollama",
+		DeviceKind:    "apple_silicon",
+		Models:        []string{"llama3.1:8b"},
+		MaxConcurrent: 2,
+		PrivacyMode:   "public",
+	}, noopNodeConn{})
+	settlements, err := settlement.New(config.SettlementConfig{
+		Enabled:                      true,
+		PricePerThousandTokensMicros: 1000,
+		ProviderRewardShareBPS:       7000,
+	})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	if _, err := settlements.Record(settlement.RecordInput{
+		RequestID:  "req-1",
+		ConsumerID: "consumer-a",
+		ProviderID: "provider-a",
+		NodeID:     "node-a",
+		Model:      "llama3.1:8b",
+		Done:       protocol.InferDone{PromptTokens: 1200, OutputTokens: 800},
+		Latency:    25 * time.Millisecond,
+	}); err != nil {
+		t.Fatalf("record settlement: %v", err)
+	}
+	challenges, err := challenge.New(config.ChallengeConfig{Enabled: true})
+	if err != nil {
+		t.Fatalf("new challenges: %v", err)
+	}
+	s := &server{registry: registry, settlement: settlements, challenges: challenges, adminToken: "admin-test"}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /admin/metrics", s.requireAdmin(s.adminMetrics))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/metrics", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized metrics status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/admin/metrics", nil)
+	req.Header.Set("Authorization", "Bearer admin-test")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/plain; version=0.0.4; charset=utf-8" {
+		t.Fatalf("content-type = %q, want prometheus text format", got)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"# TYPE mi_nodes gauge",
+		"mi_settlement_events_total",
+		`mi_provider_reward_micros{provider_id="provider-a"} 1400`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics body missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestAdminDashboardServesShellWithoutExposingData(t *testing.T) {
 	s := &server{adminToken: "admin-test"}
 	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard", nil)
@@ -106,11 +257,29 @@ func TestAdminDashboardServesShellWithoutExposingData(t *testing.T) {
 		t.Fatalf("content-type = %q, want html", got)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "mi admin dashboard") || !strings.Contains(body, "/admin/reputation") {
-		t.Fatalf("dashboard shell missing expected content")
+	for _, want := range []string{
+		"mi admin dashboard",
+		"/admin/reputation",
+		`id="createConsumer"`,
+		`id="createProvider"`,
+		`id="secretBox"`,
+		"/admin/consumers",
+		"/admin/providers/",
+		"/admin/challenges/run",
+		"Copy anchor hash",
+		"rotate-consumer",
+		"rotate-provider",
+		"run-challenge",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard shell missing %q", want)
+		}
 	}
 	if strings.Contains(body, "admin-test") {
 		t.Fatalf("dashboard shell should not expose configured admin token")
+	}
+	if strings.Contains(body, "`") {
+		t.Fatalf("dashboard shell should not contain backticks")
 	}
 }
 
@@ -315,6 +484,114 @@ func TestChatUsesCoordinatorMeasuredUsage(t *testing.T) {
 	settlementSnapshot := settlements.Snapshot(10)
 	if settlementSnapshot.Events != 1 || len(settlementSnapshot.RecentEvents) != 1 || settlementSnapshot.RecentEvents[0].TotalTokens != 4 {
 		t.Fatalf("settlement = %+v, want one event with total tokens 4", settlementSnapshot)
+	}
+}
+
+func TestChatIdempotencyReplaysWithoutSecondSettlement(t *testing.T) {
+	market, err := city.New(config.CityConfig{
+		Enabled: true,
+		Consumers: []config.ConsumerAccount{{
+			ID:              "studio",
+			TotalTokenLimit: 1000,
+			APIKeys:         []string{"sk-test"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	settlements, err := settlement.New(config.SettlementConfig{Enabled: true, PricePerThousandTokensMicros: 1000, ProviderRewardShareBPS: 7000})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	idemStore, err := idempotency.New(filepath.Join(t.TempDir(), "idempotency.db"), time.Hour)
+	if err != nil {
+		t.Fatalf("new idempotency store: %v", err)
+	}
+	defer idemStore.Close()
+
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"llama3.1:8b"}, PrivacyMode: "private"}, challengeNodeConn{content: "idempotent-ok"})
+	s := &server{registry: registry, market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), settlement: settlements, idempotency: idemStore}
+	handler := s.requireConsumerQuota(s.chatCompletions)
+	body := `{
+		"model": "llama3.1:8b",
+		"max_tokens": 8,
+		"messages": [{"role": "user", "content": "hello"}]
+	}`
+	doRequest := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer sk-test")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", "k1")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	first := doRequest()
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want 200: %s", first.Code, first.Body.String())
+	}
+	if first.Header().Get("X-Mi-Idempotent-Replay") != "" {
+		t.Fatalf("first response should not be marked as replay")
+	}
+	var response openai.ChatCompletionResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode first response: %v: %s", err, first.Body.String())
+	}
+	if response.Choices[0].Message.Content != "idempotent-ok" {
+		t.Fatalf("content = %q, want idempotent-ok", response.Choices[0].Message.Content)
+	}
+
+	second := doRequest()
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, want 200: %s", second.Code, second.Body.String())
+	}
+	if second.Header().Get("X-Mi-Idempotent-Replay") != "true" {
+		t.Fatalf("replay header = %q, want true", second.Header().Get("X-Mi-Idempotent-Replay"))
+	}
+	if !bytes.Equal(second.Body.Bytes(), first.Body.Bytes()) {
+		t.Fatalf("replay body differs\nfirst:  %s\nsecond: %s", first.Body.String(), second.Body.String())
+	}
+	if snapshot := settlements.Snapshot(10); snapshot.Events != 1 {
+		t.Fatalf("settlement events = %d, want 1", snapshot.Events)
+	}
+}
+
+func TestChatIdempotencyRejectsStreaming(t *testing.T) {
+	market, err := city.New(config.CityConfig{}, []string{"sk-test"})
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	settlements, err := settlement.New(config.SettlementConfig{})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	idemStore, err := idempotency.New(filepath.Join(t.TempDir(), "idempotency.db"), time.Hour)
+	if err != nil {
+		t.Fatalf("new idempotency store: %v", err)
+	}
+	defer idemStore.Close()
+
+	s := &server{registry: scheduler.NewRegistry(), market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), settlement: settlements, idempotency: idemStore}
+	handler := s.requireConsumerQuota(s.chatCompletions)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{
+		"model": "llama3.1:8b",
+		"stream": true,
+		"messages": [{"role": "user", "content": "hello"}]
+	}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "k1")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "idempotency keys require stream=false") {
+		t.Fatalf("body = %q, want clear idempotency message", rec.Body.String())
 	}
 }
 

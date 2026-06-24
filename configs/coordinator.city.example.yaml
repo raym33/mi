@@ -32,6 +32,9 @@ settlement:
   provider_reward_share_bps: 7000
   target_latency_ms: 5000
   latency_penalty_bps: 1000
+idempotency:
+  sqlite_path: "data/mi-idempotency.db"
+  ttl: "24h"
 challenges:
   enabled: true
   path: "data/challenge-chain.jsonl"

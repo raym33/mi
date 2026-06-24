@@ -30,6 +30,7 @@ Core API:
 - `GET /v1/me`
 - OpenAI-style streaming Server-Sent Events.
 - Stable model aliases such as `fast` or `private` mapped to concrete backend models.
+- `Idempotency-Key` replay protection for non-streaming chat retries.
 
 Coordinator and nodes:
 
@@ -61,6 +62,7 @@ Settlement and reputation:
 - Optional benchmark challenge chain and synthetic challenge runner.
 - `/admin/integrity` exports an anchor hash over settlement and challenge verification state.
 - `/admin/dashboard` serves a minimal operator dashboard for nodes, health, usage, rewards, cloud-savings estimates, integrity, and reputation.
+- `/admin/metrics` exposes Prometheus-style operator metrics for nodes, settlement, and challenges.
 
 Security and privacy controls:
 
@@ -95,6 +97,9 @@ Be precise about the current trust model:
 
 ## Architecture
 
+For the full design — trust model, failure semantics, scaling decision, and
+deliberate tradeoffs — see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ```mermaid
 flowchart LR
     C["OpenAI-compatible clients"] --> A["mi coordinator"]
@@ -125,6 +130,22 @@ brew install go ollama
 ollama serve
 ollama pull llama3.1:8b
 ```
+
+## Offline Demo (no Ollama required)
+
+To see the whole loop working in one command — coordinator, a node-agent using
+the built-in dependency-free `echo` backend, an OpenAI-compatible chat
+completion, and the operator surface (Prometheus metrics, provider payout CSV,
+integrity anchor) all reflecting the settlement that just happened:
+
+```bash
+make demo
+```
+
+This needs only Go (no Ollama, no GPU). It boots everything on `:8088`, runs a
+real authenticated request through the real WebSocket transport, prints the
+streamed result and the resulting metrics/payout/integrity output, then shuts
+down cleanly. Use it as the quickest proof the control plane works end to end.
 
 ## Quickstart: One Coordinator, One Local Node
 
@@ -206,6 +227,7 @@ City mode writes:
 
 - `data/mi-city.db` for consumers, providers, hashed secrets, quotas, and usage.
 - `data/mi-settlement.db` for settlement events.
+- `data/mi-idempotency.db` for non-streaming chat idempotency records.
 - `data/challenge-chain.jsonl` for benchmark challenge evidence.
 
 ## Accounts And Enrollment
@@ -317,7 +339,10 @@ The TLS city example also enables node mTLS for `/ws/node`.
 
 - [City Network Mode](docs/city-network.md): accounts, provider join flow, quotas, usage, privacy tiers, and admin operations.
 - [DePIN Settlement And Rewards](docs/depin-settlement.md): cooperative accounting, hash chains, rewards, reputation, challenges, and anchoring.
+- [Metrics](docs/metrics.md): Prometheus-style admin metrics for coordinator operations.
+- [Provider Payout CSV](docs/payouts.md): all-time provider payout export for cooperative settlement review.
 - [Renting Compute Privately](docs/rental-privacy.md): how to rent public capacity while keeping private requests on trusted nodes.
+- [Backups And Integrity](docs/backups.md): state files to back up, backup helper, and integrity anchor publishing.
 - [Security](docs/security.md): TLS/mTLS, auth layers, privacy limits, and settlement integrity.
 - [Design](docs/design.md): request flow, scheduler behavior, protocol metadata, and heterogeneous routing.
 - [Android And Xiaomi Roadmap](docs/android-xiaomi.md): future Snapdragon, Xiaomi, QNN, LiteRT, and Android agent strategy.

@@ -9,16 +9,17 @@ import (
 )
 
 type Coordinator struct {
-	ListenAddr   string           `yaml:"listen_addr"`
-	APIKeys      []string         `yaml:"api_keys"`
-	AdminToken   string           `yaml:"admin_token"`
-	DevAdminOpen bool             `yaml:"dev_admin_open"`
-	TLS          ServerTLSConfig  `yaml:"tls"`
-	City         CityConfig       `yaml:"city"`
-	Settlement   SettlementConfig `yaml:"settlement"`
-	Challenges   ChallengeConfig  `yaml:"challenges"`
-	Models       ModelConfig      `yaml:"models"`
-	Scheduler    SchedulerConfig  `yaml:"scheduler"`
+	ListenAddr   string            `yaml:"listen_addr"`
+	APIKeys      []string          `yaml:"api_keys"`
+	AdminToken   string            `yaml:"admin_token"`
+	DevAdminOpen bool              `yaml:"dev_admin_open"`
+	TLS          ServerTLSConfig   `yaml:"tls"`
+	City         CityConfig        `yaml:"city"`
+	Settlement   SettlementConfig  `yaml:"settlement"`
+	Idempotency  IdempotencyConfig `yaml:"idempotency"`
+	Challenges   ChallengeConfig   `yaml:"challenges"`
+	Models       ModelConfig       `yaml:"models"`
+	Scheduler    SchedulerConfig   `yaml:"scheduler"`
 }
 
 type ServerTLSConfig struct {
@@ -60,6 +61,11 @@ type SettlementConfig struct {
 	ProviderRewardShareBPS       int64  `yaml:"provider_reward_share_bps"`
 	TargetLatencyMs              int64  `yaml:"target_latency_ms"`
 	LatencyPenaltyBPS            int64  `yaml:"latency_penalty_bps"`
+}
+
+type IdempotencyConfig struct {
+	SQLitePath string   `yaml:"sqlite_path"`
+	TTL        Duration `yaml:"ttl"`
 }
 
 type ChallengeConfig struct {

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,10 +16,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -26,6 +29,7 @@ import (
 	"github.com/raym33/mi/internal/challenge"
 	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/config"
+	"github.com/raym33/mi/internal/idempotency"
 	"github.com/raym33/mi/internal/modelcatalog"
 	"github.com/raym33/mi/internal/openai"
 	"github.com/raym33/mi/internal/privacy"
@@ -37,11 +41,12 @@ import (
 )
 
 type server struct {
-	registry              *scheduler.Registry
-	market                *city.Market
-	modelCatalog          *modelcatalog.Catalog
-	settlement            *settlement.Ledger
-	challenges            *challenge.Ledger
+	registry              nodeRegistry
+	market                accountMarket
+	modelCatalog          catalogService
+	settlement            settlementLedger
+	idempotency           *idempotency.Store
+	challenges            challengeLedger
 	challengeMu           sync.Mutex
 	nextChallengeProvider int
 	adminToken            string
@@ -51,6 +56,7 @@ type server struct {
 
 const defaultReservedOutputTokens = 1024
 const defaultReputationRefreshInterval = 30 * time.Second
+const shutdownTimeout = 20 * time.Second
 
 func main() {
 	configPath := flag.String("config", "configs/coordinator.yaml", "path to coordinator config")
@@ -75,11 +81,23 @@ func main() {
 		_ = market.Close()
 		log.Fatal(err)
 	}
+	idemStore, err := idempotency.New(cfg.Idempotency.SQLitePath, cfg.Idempotency.TTL.Duration)
+	if err != nil {
+		_ = settlementLedger.Close()
+		_ = market.Close()
+		log.Fatal(err)
+	}
+	closeState := func() {
+		_ = idemStore.Close()
+		_ = settlementLedger.Close()
+		_ = market.Close()
+	}
 	s := &server{
 		registry:              scheduler.NewRegistry(),
 		market:                market,
 		modelCatalog:          modelcatalog.New(cfg.Models),
 		settlement:            settlementLedger,
+		idempotency:           idemStore,
 		challenges:            challengeLedger,
 		adminToken:            cfg.AdminToken,
 		devAdminOpen:          cfg.DevAdminOpen,
@@ -96,10 +114,12 @@ func main() {
 	mux.HandleFunc("GET /ws/node", s.nodeWebSocket)
 	mux.HandleFunc("GET /admin", s.adminDashboardRedirect)
 	mux.HandleFunc("GET /admin/dashboard", s.adminDashboard)
+	mux.HandleFunc("GET /admin/metrics", s.requireAdmin(s.adminMetrics))
 	mux.HandleFunc("GET /admin/nodes", s.requireAdmin(s.adminNodes))
 	mux.HandleFunc("GET /admin/city", s.requireAdmin(s.adminCity))
 	mux.HandleFunc("GET /admin/settlement", s.requireAdmin(s.adminSettlement))
 	mux.HandleFunc("GET /admin/settlement/verify", s.requireAdmin(s.adminSettlementVerify))
+	mux.HandleFunc("GET /admin/payouts.csv", s.requireAdmin(s.adminPayoutsCSV))
 	mux.HandleFunc("GET /admin/reputation", s.requireAdmin(s.adminReputation))
 	mux.HandleFunc("GET /admin/integrity", s.requireAdmin(s.adminIntegrity))
 	mux.HandleFunc("GET /admin/challenges", s.requireAdmin(s.adminChallenges))
@@ -113,13 +133,41 @@ func main() {
 	mux.HandleFunc("POST /admin/providers/{id}/rotate-token", s.requireAdmin(s.adminRotateProviderToken))
 	mux.HandleFunc("DELETE /admin/providers/{id}", s.requireAdmin(s.adminDisableProvider))
 
-	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
-	s.startReputationRefresher(defaultReputationRefreshInterval)
-	s.startChallengeRunner(cfg.Challenges)
-	if err := serveHTTP(cfg, mux); err != nil {
-		_ = settlementLedger.Close()
-		_ = market.Close()
+	srv, err := newHTTPServer(cfg, mux)
+	if err != nil {
+		closeState()
 		log.Fatal(err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	s.startReputationRefresher(ctx, defaultReputationRefreshInterval)
+	s.startChallengeRunner(ctx, cfg.Challenges)
+
+	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- listenAndServe(srv, cfg) }()
+
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			closeState()
+			log.Fatal(err)
+		}
+	case <-ctx.Done():
+		// Restore default signal handling so a second signal force-kills a
+		// process that is stuck draining.
+		stop()
+		log.Printf("shutdown signal received; draining in-flight requests (timeout %s)", shutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("graceful drain incomplete (%v); forcing connections closed", err)
+			_ = srv.Close()
+		}
+		closeState()
+		log.Printf("coordinator shut down cleanly")
 	}
 }
 
@@ -202,6 +250,207 @@ func (s *server) adminNodes(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.registry.Snapshot())
 }
 
+func (s *server) adminMetrics(w http.ResponseWriter, _ *http.Request) {
+	var status scheduler.NetworkStatus
+	var nodes []scheduler.NodeView
+	if s.registry != nil {
+		status = s.registry.NetworkStatus()
+		nodes = s.registry.Snapshot()
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+
+	var settlementSnapshot settlement.Snapshot
+	if s.settlement != nil {
+		settlementSnapshot = s.settlement.Snapshot(0)
+	}
+	providerBalances := append([]settlement.Balance(nil), settlementSnapshot.ProviderBalances...)
+	sort.Slice(providerBalances, func(i, j int) bool { return providerBalances[i].AccountID < providerBalances[j].AccountID })
+
+	var challengeSnapshot challenge.Snapshot
+	if s.challenges != nil {
+		challengeSnapshot = s.challenges.Snapshot(0)
+	}
+	providerChallenges := append([]challenge.ProviderSummary(nil), challengeSnapshot.Summaries...)
+	sort.Slice(providerChallenges, func(i, j int) bool { return providerChallenges[i].ProviderID < providerChallenges[j].ProviderID })
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+
+	writePrometheusHeader(w, "mi_nodes", "Registered nodes.", "gauge")
+	writePrometheusSample(w, "mi_nodes", nil, prometheusInt(int64(status.Nodes)))
+	writePrometheusHeader(w, "mi_healthy_nodes", "Healthy nodes available for routing.", "gauge")
+	writePrometheusSample(w, "mi_healthy_nodes", nil, prometheusInt(int64(status.HealthyNodes)))
+	writePrometheusHeader(w, "mi_cooldown_nodes", "Nodes currently in cooldown.", "gauge")
+	writePrometheusSample(w, "mi_cooldown_nodes", nil, prometheusInt(int64(status.CooldownNodes)))
+	writePrometheusHeader(w, "mi_active_requests", "Active inference requests across healthy nodes.", "gauge")
+	writePrometheusSample(w, "mi_active_requests", nil, prometheusInt(int64(status.ActiveRequests)))
+	writePrometheusHeader(w, "mi_available_slots", "Available request slots across healthy nodes.", "gauge")
+	writePrometheusSample(w, "mi_available_slots", nil, prometheusInt(int64(status.AvailableSlots)))
+	writePrometheusHeader(w, "mi_max_concurrent", "Maximum concurrent request capacity across healthy nodes.", "gauge")
+	writePrometheusSample(w, "mi_max_concurrent", nil, prometheusInt(int64(status.MaxConcurrent)))
+	writePrometheusHeader(w, "mi_total_memory_free_mb", "Total free memory advertised by healthy nodes in megabytes.", "gauge")
+	writePrometheusSample(w, "mi_total_memory_free_mb", nil, prometheusUint(status.TotalMemoryFreeMB))
+	writePrometheusHeader(w, "mi_average_latency_ms", "Average observed latency across healthy nodes in milliseconds.", "gauge")
+	writePrometheusSample(w, "mi_average_latency_ms", nil, prometheusInt(status.AverageLatencyMs))
+	writePrometheusHeader(w, "mi_average_ttft_ms", "Average observed time to first token across healthy nodes in milliseconds.", "gauge")
+	writePrometheusSample(w, "mi_average_ttft_ms", nil, prometheusInt(status.AverageTTFTMs))
+	writePrometheusHeader(w, "mi_average_tokens_per_second", "Average observed output tokens per second across healthy nodes.", "gauge")
+	writePrometheusSample(w, "mi_average_tokens_per_second", nil, prometheusFloat(status.AverageTokensPerSecond))
+
+	writePrometheusHeader(w, "mi_node_healthy", "Node health state, 1 for healthy and 0 for unhealthy.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_healthy", nodePrometheusLabels(node), prometheusBool(node.Healthy))
+	}
+	writePrometheusHeader(w, "mi_node_active", "Active requests on the node.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_active", nodePrometheusLabels(node), prometheusInt(int64(node.Active)))
+	}
+	writePrometheusHeader(w, "mi_node_max_concurrent", "Maximum concurrent requests accepted by the node.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_max_concurrent", nodePrometheusLabels(node), prometheusInt(int64(node.MaxConcurrent)))
+	}
+	writePrometheusHeader(w, "mi_node_completed_requests_total", "Completed requests observed for the node.", "counter")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_completed_requests_total", nodePrometheusLabels(node), prometheusInt(node.CompletedRequests))
+	}
+	writePrometheusHeader(w, "mi_node_failed_requests_total", "Failed requests observed for the node.", "counter")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_failed_requests_total", nodePrometheusLabels(node), prometheusInt(node.FailedRequests))
+	}
+	writePrometheusHeader(w, "mi_node_observed_latency_ms", "Node observed latency in milliseconds.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_observed_latency_ms", nodePrometheusLabels(node), prometheusInt(node.ObservedLatencyMs))
+	}
+	writePrometheusHeader(w, "mi_node_observed_ttft_ms", "Node observed time to first token in milliseconds.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_observed_ttft_ms", nodePrometheusLabels(node), prometheusInt(node.ObservedTTFTMs))
+	}
+	writePrometheusHeader(w, "mi_node_observed_tokens_per_second", "Node observed output tokens per second.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_observed_tokens_per_second", nodePrometheusLabels(node), prometheusFloat(node.ObservedTokensPerSecond))
+	}
+	writePrometheusHeader(w, "mi_node_provider_score", "Provider reputation score applied to the node.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_provider_score", nodePrometheusLabels(node), prometheusInt(int64(node.ProviderScore)))
+	}
+
+	writePrometheusHeader(w, "mi_settlement_events_total", "Settlement events recorded by the coordinator.", "counter")
+	writePrometheusSample(w, "mi_settlement_events_total", nil, prometheusInt(int64(settlementSnapshot.Events)))
+	writePrometheusHeader(w, "mi_provider_reward_micros", "Provider reward balance in micros.", "gauge")
+	for _, balance := range providerBalances {
+		writePrometheusSample(w, "mi_provider_reward_micros", providerPrometheusLabels(balance.AccountID), prometheusInt(balance.RewardMicros))
+	}
+	writePrometheusHeader(w, "mi_provider_penalty_micros", "Provider penalty balance in micros.", "gauge")
+	for _, balance := range providerBalances {
+		writePrometheusSample(w, "mi_provider_penalty_micros", providerPrometheusLabels(balance.AccountID), prometheusInt(balance.PenaltyMicros))
+	}
+	writePrometheusHeader(w, "mi_provider_total_tokens", "Provider token balance from settlement accounting.", "gauge")
+	for _, balance := range providerBalances {
+		writePrometheusSample(w, "mi_provider_total_tokens", providerPrometheusLabels(balance.AccountID), prometheusInt(balance.TotalTokens))
+	}
+	writePrometheusHeader(w, "mi_provider_events_total", "Settlement events recorded for the provider.", "counter")
+	for _, balance := range providerBalances {
+		writePrometheusSample(w, "mi_provider_events_total", providerPrometheusLabels(balance.AccountID), prometheusInt(balance.Events))
+	}
+
+	writePrometheusHeader(w, "mi_provider_challenges_total", "Challenges recorded for the provider.", "counter")
+	for _, summary := range providerChallenges {
+		writePrometheusSample(w, "mi_provider_challenges_total", providerPrometheusLabels(summary.ProviderID), prometheusInt(summary.Challenges))
+	}
+	writePrometheusHeader(w, "mi_provider_challenges_passed_total", "Challenges passed by the provider.", "counter")
+	for _, summary := range providerChallenges {
+		writePrometheusSample(w, "mi_provider_challenges_passed_total", providerPrometheusLabels(summary.ProviderID), prometheusInt(summary.Passed))
+	}
+	writePrometheusHeader(w, "mi_provider_challenges_failed_total", "Challenges failed by the provider.", "counter")
+	for _, summary := range providerChallenges {
+		writePrometheusSample(w, "mi_provider_challenges_failed_total", providerPrometheusLabels(summary.ProviderID), prometheusInt(summary.Failed))
+	}
+	writePrometheusHeader(w, "mi_provider_challenge_pass_rate_bps", "Provider challenge pass rate in basis points.", "gauge")
+	for _, summary := range providerChallenges {
+		writePrometheusSample(w, "mi_provider_challenge_pass_rate_bps", providerPrometheusLabels(summary.ProviderID), prometheusInt(summary.PassRateBPS))
+	}
+}
+
+type prometheusLabel struct {
+	Name      string
+	Value     string
+	OmitEmpty bool
+}
+
+func writePrometheusHeader(w io.Writer, name string, help string, metricType string) {
+	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	fmt.Fprintf(w, "# TYPE %s %s\n", name, metricType)
+}
+
+func writePrometheusSample(w io.Writer, name string, labels []prometheusLabel, value string) {
+	fmt.Fprintf(w, "%s%s %s\n", name, prometheusLabelSet(labels), value)
+}
+
+func prometheusLabelSet(labels []prometheusLabel) string {
+	var b strings.Builder
+	for _, label := range labels {
+		if label.OmitEmpty && label.Value == "" {
+			continue
+		}
+		if b.Len() == 0 {
+			b.WriteByte('{')
+		} else {
+			b.WriteByte(',')
+		}
+		b.WriteString(label.Name)
+		b.WriteString("=\"")
+		b.WriteString(escapePrometheusLabel(label.Value))
+		b.WriteByte('"')
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+var prometheusLabelEscaper = strings.NewReplacer(
+	"\\", "\\\\",
+	"\"", "\\\"",
+	"\n", "\\n",
+)
+
+func escapePrometheusLabel(value string) string {
+	return prometheusLabelEscaper.Replace(value)
+}
+
+func nodePrometheusLabels(node scheduler.NodeView) []prometheusLabel {
+	// privacy_tier is omitted because snapshots have no clean per-tier aggregate today.
+	return []prometheusLabel{
+		{Name: "node_id", Value: node.ID},
+		{Name: "provider_id", Value: node.ProviderID},
+		{Name: "backend", Value: node.Backend, OmitEmpty: true},
+		{Name: "device_kind", Value: node.DeviceKind, OmitEmpty: true},
+	}
+}
+
+func providerPrometheusLabels(providerID string) []prometheusLabel {
+	return []prometheusLabel{{Name: "provider_id", Value: providerID}}
+}
+
+func prometheusBool(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
+}
+
+func prometheusInt(value int64) string {
+	return strconv.FormatInt(value, 10)
+}
+
+func prometheusUint(value uint64) string {
+	return strconv.FormatUint(value, 10)
+}
+
+func prometheusFloat(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
 func (s *server) adminCity(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.market.Snapshot())
 }
@@ -213,6 +462,37 @@ func (s *server) adminSettlement(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) adminSettlementVerify(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.settlement.Verify())
+}
+
+func (s *server) adminPayoutsCSV(w http.ResponseWriter, _ *http.Request) {
+	displayNames := map[string]string{}
+	for _, provider := range s.market.Snapshot().Providers {
+		displayNames[provider.ID] = provider.DisplayName
+	}
+	settlementSnapshot := s.settlement.Snapshot(0)
+	balances := append([]settlement.Balance(nil), settlementSnapshot.ProviderBalances...)
+	sort.Slice(balances, func(i, j int) bool { return balances[i].AccountID < balances[j].AccountID })
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="mi-payouts.csv"`)
+	writer := csv.NewWriter(w)
+	if err := writer.Write([]string{"provider_id", "display_name", "events", "total_tokens", "avg_latency_ms", "reward_micros", "penalty_micros"}); err != nil {
+		return
+	}
+	for _, balance := range balances {
+		if err := writer.Write([]string{
+			balance.AccountID,
+			displayNames[balance.AccountID],
+			strconv.FormatInt(balance.Events, 10),
+			strconv.FormatInt(balance.TotalTokens, 10),
+			strconv.FormatInt(balance.AverageLatencyMs, 10),
+			strconv.FormatInt(balance.RewardMicros, 10),
+			strconv.FormatInt(balance.PenaltyMicros, 10),
+		}); err != nil {
+			return
+		}
+	}
+	writer.Flush()
 }
 
 func (s *server) adminReputation(w http.ResponseWriter, _ *http.Request) {
@@ -228,7 +508,7 @@ func (s *server) refreshSchedulerReputation() {
 	s.applyProviderScores(s.reputationReport())
 }
 
-func (s *server) startReputationRefresher(interval time.Duration) {
+func (s *server) startReputationRefresher(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultReputationRefreshInterval
 	}
@@ -236,8 +516,13 @@ func (s *server) startReputationRefresher(interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			s.refreshSchedulerReputation()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.refreshSchedulerReputation()
+			}
 		}
 	}()
 }
@@ -355,6 +640,11 @@ func hashIntegrityAnchor(anchor integrityAnchor) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func idempotencyScopedKey(consumerID, key string) string {
+	sum := sha256.Sum256([]byte(consumerID + "\x00" + key))
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *server) adminRunChallenge(w http.ResponseWriter, r *http.Request) {
 	var cfg config.ChallengeConfig
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
@@ -396,7 +686,7 @@ func (s *server) adminCreateConsumer(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, http.StatusCreated, created)
 }
 
-func (s *server) startChallengeRunner(cfg config.ChallengeConfig) {
+func (s *server) startChallengeRunner(ctx context.Context, cfg config.ChallengeConfig) {
 	if !cfg.Enabled || !cfg.AutoRun {
 		return
 	}
@@ -407,15 +697,20 @@ func (s *server) startChallengeRunner(cfg config.ChallengeConfig) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			ctx, cancel := context.WithTimeout(context.Background(), challengeTimeout(cfg))
-			event, err := s.runSyntheticChallenge(ctx, cfg)
-			cancel()
-			if err != nil {
-				log.Printf("challenge runner: %v", err)
-				continue
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runCtx, cancel := context.WithTimeout(ctx, challengeTimeout(cfg))
+				event, err := s.runSyntheticChallenge(runCtx, cfg)
+				cancel()
+				if err != nil {
+					log.Printf("challenge runner: %v", err)
+					continue
+				}
+				log.Printf("challenge runner recorded provider=%s node=%s passed=%t latency_ms=%d score=%d", event.ProviderID, event.NodeID, event.Passed, event.LatencyMs, event.Score)
 			}
-			log.Printf("challenge runner recorded provider=%s node=%s passed=%t latency_ms=%d score=%d", event.ProviderID, event.NodeID, event.Passed, event.LatencyMs, event.Score)
 		}
 	}()
 }
@@ -649,8 +944,58 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		inferReq.Messages = append(inferReq.Messages, protocol.ProtocolMessage{Role: msg.Role, Content: msg.Content})
 	}
 	applyDefaultMaxTokens(&inferReq)
-	reservation, err := s.market.ReserveConsumerQuota(consumerID(r.Context()), estimateTokenBudget(req))
+
+	cid := consumerID(r.Context())
+	var activeIdemKey string
+	key := r.Header.Get("Idempotency-Key")
+	if key != "" && req.Stream {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{
+			"error": map[string]string{
+				"message": "idempotency keys require stream=false",
+				"type":    "invalid_request",
+			},
+		})
+		return
+	}
+	if s.idempotency.Enabled() && key != "" {
+		scoped := idempotencyScopedKey(cid, key)
+		rec, err := s.idempotency.Begin(scoped)
+		if err != nil {
+			log.Printf("idempotency begin: %v", err)
+			writeJSONStatus(w, http.StatusInternalServerError, map[string]any{
+				"error": map[string]string{
+					"message": "idempotency store error",
+					"type":    "internal_error",
+				},
+			})
+			return
+		}
+		if rec != nil && rec.Status == "completed" {
+			w.Header().Set("Content-Type", rec.ContentType)
+			w.Header().Set("X-Mi-Idempotent-Replay", "true")
+			w.WriteHeader(rec.StatusCode)
+			_, _ = w.Write(rec.Response)
+			return
+		}
+		if rec != nil && rec.Status == "in_progress" {
+			writeJSONStatus(w, http.StatusConflict, map[string]any{
+				"error": map[string]string{
+					"message": "a request with this Idempotency-Key is already in progress",
+					"type":    "idempotency_conflict",
+				},
+			})
+			return
+		}
+		activeIdemKey = scoped
+	}
+
+	reservation, err := s.market.ReserveConsumerQuota(cid, estimateTokenBudget(req))
 	if err != nil {
+		if activeIdemKey != "" {
+			if err := s.idempotency.Abort(activeIdemKey); err != nil {
+				log.Printf("idempotency abort: %v", err)
+			}
+		}
 		writeJSONStatus(w, http.StatusPaymentRequired, map[string]any{
 			"error": map[string]string{
 				"message": err.Error(),
@@ -661,10 +1006,10 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Stream {
-		s.streamChat(w, r, requestID, req.Model, inferReq, consumerID(r.Context()), reservation)
+		s.streamChat(w, r, requestID, req.Model, inferReq, cid, reservation)
 		return
 	}
-	s.blockingChat(w, r, requestID, req.Model, inferReq, consumerID(r.Context()), reservation)
+	s.blockingChat(w, r, requestID, req.Model, inferReq, cid, reservation, activeIdemKey)
 }
 
 func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string, reservation *city.QuotaReservation) {
@@ -722,7 +1067,7 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	flusher.Flush()
 }
 
-func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string, reservation *city.QuotaReservation) {
+func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string, reservation *city.QuotaReservation, activeIdemKey string) {
 	var content string
 	sink := collectSink{onChunk: func(chunk string) { content += chunk }}
 	metered := &meteredSink{inner: sink}
@@ -734,6 +1079,11 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 	setDispatchHeaders(w, result)
 	if err != nil {
 		s.market.ReleaseReservation(reservation)
+		if activeIdemKey != "" {
+			if err := s.idempotency.Abort(activeIdemKey); err != nil {
+				log.Printf("idempotency abort: %v", err)
+			}
+		}
 		status := http.StatusBadGateway
 		if errors.Is(err, scheduler.ErrNoNode) {
 			status = http.StatusServiceUnavailable
@@ -758,7 +1108,7 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 	}); err != nil {
 		log.Printf("record settlement: %v", err)
 	}
-	writeJSON(w, openai.ChatCompletionResponse{
+	response := openai.ChatCompletionResponse{
 		ID:      requestID,
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
@@ -773,7 +1123,23 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 			CompletionTokens: done.OutputTokens,
 			TotalTokens:      done.PromptTokens + done.OutputTokens,
 		},
-	})
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	body = append(body, '\n')
+	if activeIdemKey != "" {
+		if err := s.idempotency.Complete(activeIdemKey, http.StatusOK, "application/json", body); err != nil {
+			log.Printf("idempotency complete: %v", err)
+			http.Error(w, "idempotency store error", http.StatusInternalServerError)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 func (s *server) writeStreamError(w http.ResponseWriter, flusher http.Flusher, err error) {
@@ -1188,33 +1554,43 @@ func consumerID(ctx context.Context) string {
 	return "local"
 }
 
-func serveHTTP(cfg config.Coordinator, handler http.Handler) error {
+// newHTTPServer builds the coordinator's *http.Server and validates the TLS
+// configuration up front, so the caller holds the server reference and can
+// drive a graceful Shutdown. It does not start listening.
+func newHTTPServer(cfg config.Coordinator, handler http.Handler) (*http.Server, error) {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	if cfg.TLS.NodeClientCAFile != "" {
 		certPool, err := loadCertPool(cfg.TLS.NodeClientCAFile)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		tlsConfig.ClientCAs = certPool
 		tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
 	}
-	server := &http.Server{
+	if cfg.TLS.CertFile != "" || cfg.TLS.KeyFile != "" {
+		if cfg.TLS.CertFile == "" || cfg.TLS.KeyFile == "" {
+			return nil, errors.New("both tls.cert_file and tls.key_file are required")
+		}
+	} else if cfg.TLS.NodeClientCAFile != "" {
+		return nil, errors.New("tls.node_client_ca_file requires tls.cert_file and tls.key_file")
+	}
+	return &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: handler,
 		// Keep WebSocket upgrades on HTTP/1.1 until the provider wire protocol
 		// explicitly supports RFC 8441 WebSockets over HTTP/2.
 		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
 		TLSConfig:    tlsConfig,
-	}
-	if cfg.TLS.CertFile != "" || cfg.TLS.KeyFile != "" {
-		if cfg.TLS.CertFile == "" || cfg.TLS.KeyFile == "" {
-			return errors.New("both tls.cert_file and tls.key_file are required")
-		}
+	}, nil
+}
+
+// listenAndServe blocks serving on the configured listener. It returns
+// http.ErrServerClosed after a graceful Shutdown, which the caller treats as a
+// clean stop rather than a failure.
+func listenAndServe(server *http.Server, cfg config.Coordinator) error {
+	if cfg.TLS.CertFile != "" {
 		log.Printf("TLS enabled for coordinator")
 		return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
-	}
-	if cfg.TLS.NodeClientCAFile != "" {
-		return errors.New("tls.node_client_ca_file requires tls.cert_file and tls.key_file")
 	}
 	return server.ListenAndServe()
 }

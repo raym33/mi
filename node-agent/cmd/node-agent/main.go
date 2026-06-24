@@ -7,18 +7,22 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/raym33/mi/internal/backend"
 	"github.com/raym33/mi/internal/config"
+	"github.com/raym33/mi/internal/echobackend"
 	"github.com/raym33/mi/internal/ollama"
 	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
@@ -50,12 +54,31 @@ func main() {
 	}
 
 	a := &agent{cfg: cfg, backend: runtimeBackend}
-	for {
-		if err := a.run(context.Background()); err != nil {
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	for ctx.Err() == nil {
+		if err := a.run(ctx); err != nil {
 			log.Printf("agent disconnected: %v", err)
 		}
-		time.Sleep(2 * time.Second)
+		// Back off with jitter so a coordinator restart does not trigger a
+		// synchronized reconnect storm across the fleet.
+		select {
+		case <-ctx.Done():
+		case <-time.After(reconnectDelay()):
+		}
 	}
+	log.Printf("node agent stopped")
+}
+
+const (
+	reconnectBaseDelay   = 1 * time.Second
+	reconnectJitterRange = 2 * time.Second
+)
+
+func reconnectDelay() time.Duration {
+	return reconnectBaseDelay + time.Duration(rand.Int63n(int64(reconnectJitterRange)))
 }
 
 func (a *agent) run(ctx context.Context) error {
@@ -199,6 +222,8 @@ func newInferenceBackend(cfg config.NodeAgent) (backend.Runtime, error) {
 	switch strings.ToLower(cfg.Backend.Type) {
 	case "", "ollama":
 		return ollama.New(cfg.Backend.URL), nil
+	case "echo", "mock":
+		return echobackend.New(), nil
 	default:
 		return nil, errors.New("unsupported backend type: " + cfg.Backend.Type)
 	}
