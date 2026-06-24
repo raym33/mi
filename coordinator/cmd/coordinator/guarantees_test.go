@@ -206,3 +206,32 @@ func postIdempotent(t *testing.T, ts *httptest.Server, model, key string) *http.
 	}
 	return resp
 }
+
+// TestRequestBodyLimitReturns413 proves an oversized request body is rejected
+// with 413 instead of being read into memory unbounded.
+func TestRequestBodyLimitReturns413(t *testing.T) {
+	market, err := city.New(config.CityConfig{}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	s := &server{
+		registry:        scheduler.NewRegistry(),
+		market:          market,
+		modelCatalog:    modelcatalog.New(config.ModelConfig{}),
+		maxRequestBytes: 32,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/chat/completions", s.requireConsumerQuota(s.chatCompletions))
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	big := `{"model":"m","messages":[{"role":"user","content":"` + strings.Repeat("x", 500) + `"}]}`
+	resp, err := http.Post(ts.URL+"/v1/chat/completions", "application/json", strings.NewReader(big))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+}

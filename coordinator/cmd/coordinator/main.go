@@ -53,7 +53,10 @@ type server struct {
 	devAdminOpen          bool
 	requireNodeClientCert bool
 	requestTimeout        time.Duration
+	maxRequestBytes       int64
 }
+
+const defaultMaxRequestBytes = 8 << 20 // 8 MiB
 
 const defaultReservedOutputTokens = 1024
 const defaultReputationRefreshInterval = 30 * time.Second
@@ -104,6 +107,7 @@ func main() {
 		devAdminOpen:          cfg.DevAdminOpen,
 		requireNodeClientCert: cfg.TLS.NodeClientCAFile != "",
 		requestTimeout:        cfg.Scheduler.RequestTimeout.Duration,
+		maxRequestBytes:       maxRequestBytesOrDefault(cfg.MaxRequestBytes),
 	}
 
 	mux := http.NewServeMux()
@@ -643,6 +647,24 @@ func hashIntegrityAnchor(anchor integrityAnchor) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func maxRequestBytesOrDefault(configured int64) int64 {
+	if configured > 0 {
+		return configured
+	}
+	return defaultMaxRequestBytes
+}
+
+// writeDecodeError maps a request-body decode failure to a status code: 413 when
+// the body exceeded the configured limit, otherwise 400.
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusBadRequest)
+}
+
 func idempotencyScopedKey(consumerID, key string) string {
 	sum := sha256.Sum256([]byte(consumerID + "\x00" + key))
 	return hex.EncodeToString(sum[:])
@@ -910,9 +932,10 @@ func (s *server) adminDisableProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
 	var req openai.ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeDecodeError(w, err)
 		return
 	}
 	if req.Model == "" || len(req.Messages) == 0 {
@@ -1023,9 +1046,10 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) embeddings(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
 	var req openai.EmbeddingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeDecodeError(w, err)
 		return
 	}
 	input, err := parseEmbeddingInput(req.Input)
