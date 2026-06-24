@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,7 +64,7 @@ func newE2EServer(t *testing.T, adminToken string) (*server, *httptest.Server) {
 
 // dialE2ENode connects a node over a real WebSocket, registers it, and answers
 // each infer request with a streamed chunk and a done frame, like the node-agent.
-func dialE2ENode(t *testing.T, ctx context.Context, ts *httptest.Server, nodeID, providerID, model, content string) *websocket.Conn {
+func dialE2ENode(t *testing.T, ctx context.Context, ts *httptest.Server, nodeID, providerID, model, content string, maxConcurrent int) *websocket.Conn {
 	t.Helper()
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/node"
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
@@ -78,10 +79,16 @@ func dialE2ENode(t *testing.T, ctx context.Context, ts *httptest.Server, nodeID,
 			ProviderID:    providerID,
 			PrivacyMode:   "private",
 			Models:        []string{model},
-			MaxConcurrent: 1,
+			MaxConcurrent: maxConcurrent,
 		},
 	}); err != nil {
 		t.Fatalf("send register: %v", err)
+	}
+	var writeMu sync.Mutex
+	write := func(env protocol.Envelope) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		_ = wsutil.WriteJSON(ctx, conn, env)
 	}
 	go func() {
 		for {
@@ -92,18 +99,22 @@ func dialE2ENode(t *testing.T, ctx context.Context, ts *httptest.Server, nodeID,
 			if msg.Type != "infer" || msg.Infer == nil {
 				continue
 			}
-			_ = wsutil.WriteJSON(ctx, conn, protocol.Envelope{
-				Version:   protocol.Version,
-				Type:      "chunk",
-				RequestID: msg.RequestID,
-				Chunk:     &protocol.InferChunk{Content: content},
-			})
-			_ = wsutil.WriteJSON(ctx, conn, protocol.Envelope{
-				Version:   protocol.Version,
-				Type:      "done",
-				RequestID: msg.RequestID,
-				Done:      &protocol.InferDone{FinishReason: "stop", PromptTokens: 5, OutputTokens: 4},
-			})
+			// Handle each inference concurrently, like the real node-agent, so
+			// concurrent dispatch is genuinely exercised.
+			go func(requestID string) {
+				write(protocol.Envelope{
+					Version:   protocol.Version,
+					Type:      "chunk",
+					RequestID: requestID,
+					Chunk:     &protocol.InferChunk{Content: content},
+				})
+				write(protocol.Envelope{
+					Version:   protocol.Version,
+					Type:      "done",
+					RequestID: requestID,
+					Done:      &protocol.InferDone{FinishReason: "stop", PromptTokens: 5, OutputTokens: 4},
+				})
+			}(msg.RequestID)
 		}
 	}()
 	return conn
@@ -135,7 +146,7 @@ func TestEndToEndChatOverWebSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	conn := dialE2ENode(t, ctx, ts, "e2e-node", "e2e-provider", "e2e-model", "hello from e2e node")
+	conn := dialE2ENode(t, ctx, ts, "e2e-node", "e2e-provider", "e2e-model", "hello from e2e node", 1)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	waitFor(t, 5*time.Second, func() bool { return hasModel(s, "e2e-model") })
@@ -164,7 +175,7 @@ func TestEndToEndOperatorEndpointsReflectTraffic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	conn := dialE2ENode(t, ctx, ts, "ops-node", "ops-provider", "ops-model", "served")
+	conn := dialE2ENode(t, ctx, ts, "ops-node", "ops-provider", "ops-model", "served", 1)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	waitFor(t, 5*time.Second, func() bool { return hasModel(s, "ops-model") })
@@ -199,6 +210,58 @@ func TestEndToEndOperatorEndpointsReflectTraffic(t *testing.T) {
 		t.Fatalf("payout row provider = %q, want ops-provider", records[1][0])
 	}
 }
+
+// TestEndToEndConcurrentChats fires many completions at once against a single
+// node and asserts every one succeeds and settles exactly once. It exercises the
+// registry under contention and the serial settlement writer; runs clean under
+// the race detector.
+func TestEndToEndConcurrentChats(t *testing.T) {
+	const n = 20
+	s, ts := newE2EServer(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	conn := dialE2ENode(t, ctx, ts, "load-node", "load-provider", "load-model", "ok", 32)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	waitFor(t, 5*time.Second, func() bool { return hasModel(s, "load-model") })
+
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			body := `{"model":"load-model","privacy_tier":"private","messages":[{"role":"user","content":"hi"}],"stream":false}`
+			resp, err := http.Post(ts.URL+"/v1/chat/completions", "application/json", strings.NewReader(body))
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer resp.Body.Close()
+			io.Copy(io.Discard, resp.Body)
+			if resp.StatusCode != http.StatusOK {
+				errs <- &httpStatusError{resp.StatusCode}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent request failed: %v", err)
+	}
+
+	waitFor(t, 5*time.Second, func() bool { return s.settlement.Snapshot(0).Events == n })
+	if got := s.settlement.Snapshot(0).Events; got != n {
+		t.Fatalf("settlement events = %d, want %d", got, n)
+	}
+	if v := s.settlement.Verify(); !v.Valid {
+		t.Fatalf("settlement chain invalid after concurrent load: %s", v.Error)
+	}
+}
+
+type httpStatusError struct{ code int }
+
+func (e *httpStatusError) Error() string { return http.StatusText(e.code) }
 
 func hasModel(s *server, model string) bool {
 	for _, m := range s.registry.Models() {
