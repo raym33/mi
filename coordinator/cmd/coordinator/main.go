@@ -16,10 +16,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -52,6 +54,7 @@ type server struct {
 
 const defaultReservedOutputTokens = 1024
 const defaultReputationRefreshInterval = 30 * time.Second
+const shutdownTimeout = 20 * time.Second
 
 func main() {
 	configPath := flag.String("config", "configs/coordinator.yaml", "path to coordinator config")
@@ -116,13 +119,46 @@ func main() {
 	mux.HandleFunc("POST /admin/providers/{id}/rotate-token", s.requireAdmin(s.adminRotateProviderToken))
 	mux.HandleFunc("DELETE /admin/providers/{id}", s.requireAdmin(s.adminDisableProvider))
 
-	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
-	s.startReputationRefresher(defaultReputationRefreshInterval)
-	s.startChallengeRunner(cfg.Challenges)
-	if err := serveHTTP(cfg, mux); err != nil {
+	closeState := func() {
 		_ = settlementLedger.Close()
 		_ = market.Close()
+	}
+
+	srv, err := newHTTPServer(cfg, mux)
+	if err != nil {
+		closeState()
 		log.Fatal(err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	s.startReputationRefresher(ctx, defaultReputationRefreshInterval)
+	s.startChallengeRunner(ctx, cfg.Challenges)
+
+	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- listenAndServe(srv, cfg) }()
+
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			closeState()
+			log.Fatal(err)
+		}
+	case <-ctx.Done():
+		// Restore default signal handling so a second signal force-kills a
+		// process that is stuck draining.
+		stop()
+		log.Printf("shutdown signal received; draining in-flight requests (timeout %s)", shutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("graceful drain incomplete (%v); forcing connections closed", err)
+			_ = srv.Close()
+		}
+		closeState()
+		log.Printf("coordinator shut down cleanly")
 	}
 }
 
@@ -463,7 +499,7 @@ func (s *server) refreshSchedulerReputation() {
 	s.applyProviderScores(s.reputationReport())
 }
 
-func (s *server) startReputationRefresher(interval time.Duration) {
+func (s *server) startReputationRefresher(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = defaultReputationRefreshInterval
 	}
@@ -471,8 +507,13 @@ func (s *server) startReputationRefresher(interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			s.refreshSchedulerReputation()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.refreshSchedulerReputation()
+			}
 		}
 	}()
 }
@@ -631,7 +672,7 @@ func (s *server) adminCreateConsumer(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, http.StatusCreated, created)
 }
 
-func (s *server) startChallengeRunner(cfg config.ChallengeConfig) {
+func (s *server) startChallengeRunner(ctx context.Context, cfg config.ChallengeConfig) {
 	if !cfg.Enabled || !cfg.AutoRun {
 		return
 	}
@@ -642,15 +683,20 @@ func (s *server) startChallengeRunner(cfg config.ChallengeConfig) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			ctx, cancel := context.WithTimeout(context.Background(), challengeTimeout(cfg))
-			event, err := s.runSyntheticChallenge(ctx, cfg)
-			cancel()
-			if err != nil {
-				log.Printf("challenge runner: %v", err)
-				continue
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runCtx, cancel := context.WithTimeout(ctx, challengeTimeout(cfg))
+				event, err := s.runSyntheticChallenge(runCtx, cfg)
+				cancel()
+				if err != nil {
+					log.Printf("challenge runner: %v", err)
+					continue
+				}
+				log.Printf("challenge runner recorded provider=%s node=%s passed=%t latency_ms=%d score=%d", event.ProviderID, event.NodeID, event.Passed, event.LatencyMs, event.Score)
 			}
-			log.Printf("challenge runner recorded provider=%s node=%s passed=%t latency_ms=%d score=%d", event.ProviderID, event.NodeID, event.Passed, event.LatencyMs, event.Score)
 		}
 	}()
 }
@@ -1423,33 +1469,43 @@ func consumerID(ctx context.Context) string {
 	return "local"
 }
 
-func serveHTTP(cfg config.Coordinator, handler http.Handler) error {
+// newHTTPServer builds the coordinator's *http.Server and validates the TLS
+// configuration up front, so the caller holds the server reference and can
+// drive a graceful Shutdown. It does not start listening.
+func newHTTPServer(cfg config.Coordinator, handler http.Handler) (*http.Server, error) {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	if cfg.TLS.NodeClientCAFile != "" {
 		certPool, err := loadCertPool(cfg.TLS.NodeClientCAFile)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		tlsConfig.ClientCAs = certPool
 		tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
 	}
-	server := &http.Server{
+	if cfg.TLS.CertFile != "" || cfg.TLS.KeyFile != "" {
+		if cfg.TLS.CertFile == "" || cfg.TLS.KeyFile == "" {
+			return nil, errors.New("both tls.cert_file and tls.key_file are required")
+		}
+	} else if cfg.TLS.NodeClientCAFile != "" {
+		return nil, errors.New("tls.node_client_ca_file requires tls.cert_file and tls.key_file")
+	}
+	return &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: handler,
 		// Keep WebSocket upgrades on HTTP/1.1 until the provider wire protocol
 		// explicitly supports RFC 8441 WebSockets over HTTP/2.
 		TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){},
 		TLSConfig:    tlsConfig,
-	}
-	if cfg.TLS.CertFile != "" || cfg.TLS.KeyFile != "" {
-		if cfg.TLS.CertFile == "" || cfg.TLS.KeyFile == "" {
-			return errors.New("both tls.cert_file and tls.key_file are required")
-		}
+	}, nil
+}
+
+// listenAndServe blocks serving on the configured listener. It returns
+// http.ErrServerClosed after a graceful Shutdown, which the caller treats as a
+// clean stop rather than a failure.
+func listenAndServe(server *http.Server, cfg config.Coordinator) error {
+	if cfg.TLS.CertFile != "" {
 		log.Printf("TLS enabled for coordinator")
 		return server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
-	}
-	if cfg.TLS.NodeClientCAFile != "" {
-		return errors.New("tls.node_client_ca_file requires tls.cert_file and tls.key_file")
 	}
 	return server.ListenAndServe()
 }
