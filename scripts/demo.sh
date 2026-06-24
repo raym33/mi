@@ -67,6 +67,14 @@ curl -fsS "$BASE_URL/v1/chat/completions" \
   }'
 printf '\n\n'
 
+echo "== embeddings (OpenAI-compatible) =="
+curl -fsS "$BASE_URL/v1/embeddings" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"demo-model","input":["first text","second text"]}' \
+  | head -c 400
+printf '\n... (truncated)\n\n'
+
 echo "== admin metrics (Prometheus) =="
 curl -fsS "$BASE_URL/admin/metrics" -H "Authorization: Bearer $ADMIN_TOKEN" \
   | grep -E '^mi_(settlement_events_total|provider_reward_micros|nodes) ' || true
