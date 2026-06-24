@@ -96,7 +96,8 @@ type ModelAlias struct {
 }
 
 type SchedulerConfig struct {
-	MaxQueuePenalty int `yaml:"max_queue_penalty"`
+	MaxQueuePenalty int      `yaml:"max_queue_penalty"`
+	RequestTimeout  Duration `yaml:"request_timeout"`
 }
 
 type NodeAgent struct {

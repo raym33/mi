@@ -52,6 +52,7 @@ type server struct {
 	adminToken            string
 	devAdminOpen          bool
 	requireNodeClientCert bool
+	requestTimeout        time.Duration
 }
 
 const defaultReservedOutputTokens = 1024
@@ -102,6 +103,7 @@ func main() {
 		adminToken:            cfg.AdminToken,
 		devAdminOpen:          cfg.DevAdminOpen,
 		requireNodeClientCert: cfg.TLS.NodeClientCAFile != "",
+		requestTimeout:        cfg.Scheduler.RequestTimeout.Duration,
 	}
 
 	mux := http.NewServeMux()
@@ -915,6 +917,13 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if req.Model == "" || len(req.Messages) == 0 {
 		http.Error(w, "model and messages are required", http.StatusBadRequest)
 		return
+	}
+
+	// Bound the request so a stuck node cannot hang the client indefinitely.
+	if s.requestTimeout > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), s.requestTimeout)
+		defer cancel()
+		r = r.WithContext(ctx)
 	}
 
 	requestID := "chatcmpl-" + randomID()
