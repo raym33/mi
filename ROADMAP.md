@@ -22,7 +22,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Default output caps for requests that omit `max_tokens`.
 - Per-provider challenge rotation so quiet nodes are tested regularly.
 - Combined settlement and challenge integrity manifest for external anchoring.
-- Persistent local usage ledger.
+- SQLite/WAL-backed city state and settlement ledger.
 - HTTPS/WSS and node mTLS.
 - WebSocket protocol version fields for gradual node upgrades.
 - Scheduler failover before first token.
@@ -44,7 +44,7 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - One-command provider enrollment.
 - macOS LaunchAgent installer for always-on nodes.
 - Better admin and operator documentation.
-- SQLite storage for larger city networks.
+- Postgres storage option for larger multi-coordinator city networks.
 - Android/Xiaomi node-agent design and prototype.
 
 ## Later

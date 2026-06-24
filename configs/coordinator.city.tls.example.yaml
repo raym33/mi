@@ -8,7 +8,7 @@ city:
   enabled: true
   name: "Madrid Local AI"
   require_provider_tokens: true
-  usage_store_path: "data/city-usage.json"
+  sqlite_path: "data/mi-city.db"
   consumers:
     - id: "studio-a"
       display_name: "Studio A"
@@ -22,7 +22,7 @@ city:
       privacy_mode: "private"
 settlement:
   enabled: true
-  chain_path: "data/settlement-chain.jsonl"
+  sqlite_path: "data/mi-settlement.db"
   price_per_thousand_tokens_micros: 1000
   provider_reward_share_bps: 7000
   target_latency_ms: 5000

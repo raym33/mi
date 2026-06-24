@@ -48,7 +48,7 @@ flowchart LR
 
 - macOS on provider machines.
 - Apple Silicon recommended.
-- Go 1.23 or newer.
+- Go 1.25 or newer.
 - Ollama installed on each node.
 - A local model, for example `llama3.1:8b`.
 
@@ -103,7 +103,7 @@ make smoke
 
 ## City Mode
 
-City mode turns `mi` into a small local inference network with consumers, providers, provider tokens, API keys, quotas, and usage accounting.
+City mode turns `mi` into a small local inference network with consumers, providers, provider tokens, API keys, quotas, and usage accounting. The city examples use SQLite/WAL for durable local state and settlement events.
 
 ```bash
 make run-city-coordinator

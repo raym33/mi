@@ -66,10 +66,13 @@ func main() {
 	}
 	settlementLedger, err := settlement.New(cfg.Settlement)
 	if err != nil {
+		_ = market.Close()
 		log.Fatal(err)
 	}
 	challengeLedger, err := challenge.New(cfg.Challenges)
 	if err != nil {
+		_ = settlementLedger.Close()
+		_ = market.Close()
 		log.Fatal(err)
 	}
 	s := &server{
@@ -111,7 +114,11 @@ func main() {
 	log.Printf("mi coordinator listening on %s", cfg.ListenAddr)
 	s.startReputationRefresher(defaultReputationRefreshInterval)
 	s.startChallengeRunner(cfg.Challenges)
-	log.Fatal(serveHTTP(cfg, mux))
+	if err := serveHTTP(cfg, mux); err != nil {
+		_ = settlementLedger.Close()
+		_ = market.Close()
+		log.Fatal(err)
+	}
 }
 
 type contextKey string

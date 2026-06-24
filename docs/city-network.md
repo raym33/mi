@@ -12,7 +12,7 @@ It introduces four primitives:
 - Quota reservations: estimated request budget is reserved before dispatch, then reconciled with coordinator-estimated usage when the request finishes.
 - Settlement chain: successful inference can create tamper-evident debit and reward events.
 - SLA penalties: settlement can reduce provider rewards when successful requests exceed a configured latency target.
-- Persistent local usage: usage survives coordinator restarts when `usage_store_path` is configured.
+- Persistent local usage: usage survives coordinator restarts when `sqlite_path` or legacy `usage_store_path` is configured.
 - Privacy tiers: private prompts stay on trusted nodes, while public prompts can use rented provider capacity.
 
 This is not a payment system yet. It is the base ledger needed before payouts and prepaid credits.
@@ -247,8 +247,8 @@ curl -X POST http://localhost:8080/admin/challenges/run \
 
 Add `"provider_id":"ray-home"` to target a specific provider. Without `provider_id`, the runner rotates across eligible providers.
 
-The example config writes usage to `data/city-usage.json`. Keep that file backed up if it represents real credits.
-The example settlement chain writes to `data/settlement-chain.jsonl`. Back it up and periodically anchor its latest hash externally if rewards represent real money.
+The example config writes city state to `data/mi-city.db` with SQLite/WAL. Legacy JSON state is still supported through `usage_store_path`.
+The example settlement ledger writes hash-chained events to `data/mi-settlement.db` with SQLite/WAL. Legacy JSONL chains are still supported through `chain_path`. Back it up and periodically anchor its latest hash externally if rewards represent real money.
 The example challenge chain writes to `data/challenge-chain.jsonl`.
 Generated API keys and provider tokens are not stored in plaintext; only hashes are persisted.
 
@@ -293,7 +293,7 @@ make city-smoke
 
 - Replace static provider tokens with enrollment links.
 - Add temporary enrollment links and one-command node join.
-- Move from JSON persistence to SQLite/Postgres for larger networks.
+- Add Postgres as an optional multi-coordinator store for larger networks.
 - Add quotas and prepaid credits.
 - Add TLS/mTLS.
 - Add mTLS for node-only endpoints.

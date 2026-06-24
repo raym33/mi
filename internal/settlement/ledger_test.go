@@ -80,3 +80,85 @@ func TestLedgerDetectsTamperingOnLoad(t *testing.T) {
 		t.Fatalf("new tampered ledger = %v, want ErrInvalidChain", err)
 	}
 }
+
+func TestSQLiteLedgerRecordsAndVerifiesEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settlement.db")
+	ledger, err := New(config.SettlementConfig{
+		Enabled:                      true,
+		SQLitePath:                   path,
+		PricePerThousandTokensMicros: 2000,
+		ProviderRewardShareBPS:       7000,
+		TargetLatencyMs:              1000,
+		LatencyPenaltyBPS:            1000,
+	})
+	if err != nil {
+		t.Fatalf("new ledger: %v", err)
+	}
+	event, err := ledger.Record(RecordInput{
+		RequestID:        "req-1",
+		ConsumerID:       "studio",
+		ProviderID:       "provider-a",
+		NodeID:           "node-a",
+		Model:            "fast",
+		PrivacyTier:      "public",
+		Done:             protocol.InferDone{PromptTokens: 400, OutputTokens: 600},
+		Latency:          1500 * time.Millisecond,
+		DispatchAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	var journalMode string
+	if err := ledger.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		t.Fatalf("journal mode: %v", err)
+	}
+	if journalMode != "wal" {
+		t.Fatalf("journal mode = %q, want wal", journalMode)
+	}
+	if err := ledger.Close(); err != nil {
+		t.Fatalf("close ledger: %v", err)
+	}
+
+	restarted, err := New(config.SettlementConfig{
+		Enabled:                      true,
+		SQLitePath:                   path,
+		PricePerThousandTokensMicros: 2000,
+		ProviderRewardShareBPS:       7000,
+		TargetLatencyMs:              1000,
+		LatencyPenaltyBPS:            1000,
+	})
+	if err != nil {
+		t.Fatalf("restart ledger: %v", err)
+	}
+	defer restarted.Close()
+	if verification := restarted.Verify(); !verification.Valid || verification.Events != 1 || verification.LastHash != event.Hash {
+		t.Fatalf("verification = %+v, want valid persisted chain", verification)
+	}
+	snapshot := restarted.Snapshot(10)
+	if snapshot.SQLitePath != path || snapshot.ChainPath != "" {
+		t.Fatalf("snapshot paths = sqlite %q chain %q, want sqlite only", snapshot.SQLitePath, snapshot.ChainPath)
+	}
+	if len(snapshot.ProviderBalances) != 1 || snapshot.ProviderBalances[0].RewardMicros != 1260 {
+		t.Fatalf("provider balances = %+v", snapshot.ProviderBalances)
+	}
+}
+
+func TestSQLiteLedgerDetectsTamperingOnLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settlement.db")
+	ledger, err := New(config.SettlementConfig{Enabled: true, SQLitePath: path, PricePerThousandTokensMicros: 1000})
+	if err != nil {
+		t.Fatalf("new ledger: %v", err)
+	}
+	if _, err := ledger.Record(RecordInput{RequestID: "req-1", ConsumerID: "studio", Done: protocol.InferDone{PromptTokens: 1, OutputTokens: 1}}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if _, err := ledger.db.Exec(`UPDATE settlement_events SET total_tokens = 200 WHERE event_index = 1`); err != nil {
+		t.Fatalf("tamper sqlite: %v", err)
+	}
+	if err := ledger.Close(); err != nil {
+		t.Fatalf("close ledger: %v", err)
+	}
+	if _, err := New(config.SettlementConfig{Enabled: true, SQLitePath: path, PricePerThousandTokensMicros: 1000}); err != ErrInvalidChain {
+		t.Fatalf("new tampered sqlite ledger = %v, want ErrInvalidChain", err)
+	}
+}

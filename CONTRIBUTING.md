@@ -42,6 +42,8 @@ ollama serve
 ollama pull llama3.1:8b
 ```
 
+Use Go 1.25 or newer.
+
 Run tests:
 
 ```bash

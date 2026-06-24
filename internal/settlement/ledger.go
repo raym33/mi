@@ -3,6 +3,7 @@ package settlement
 import (
 	"bufio"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/raym33/mi/internal/config"
 	"github.com/raym33/mi/internal/protocol"
+	"github.com/raym33/mi/internal/sqlitestore"
 )
 
 const genesisHash = "genesis"
@@ -24,6 +26,8 @@ type Ledger struct {
 	mu                sync.Mutex
 	enabled           bool
 	path              string
+	sqlitePath        string
+	db                *sql.DB
 	price             int64
 	shareBPS          int64
 	targetLatencyMs   int64
@@ -78,6 +82,7 @@ type Balance struct {
 type Snapshot struct {
 	Enabled                      bool      `json:"enabled"`
 	ChainPath                    string    `json:"chain_path,omitempty"`
+	SQLitePath                   string    `json:"sqlite_path,omitempty"`
 	Events                       int       `json:"events"`
 	LastHash                     string    `json:"last_hash,omitempty"`
 	PricePerThousandTokensMicros int64     `json:"price_per_thousand_tokens_micros,omitempty"`
@@ -118,18 +123,40 @@ func New(cfg config.SettlementConfig) (*Ledger, error) {
 	l := &Ledger{
 		enabled:           cfg.Enabled,
 		path:              cfg.ChainPath,
+		sqlitePath:        cfg.SQLitePath,
 		price:             price,
 		shareBPS:          share,
 		targetLatencyMs:   cfg.TargetLatencyMs,
 		latencyPenaltyBPS: penalty,
 		lastHash:          genesisHash,
 	}
-	if l.path != "" {
+	if l.sqlitePath != "" {
+		db, err := sqlitestore.Open(l.sqlitePath)
+		if err != nil {
+			return nil, err
+		}
+		l.db = db
+		if err := l.initSQLite(); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		if err := l.loadSQLite(); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	} else if l.path != "" {
 		if err := l.load(); err != nil {
 			return nil, err
 		}
 	}
 	return l, nil
+}
+
+func (l *Ledger) Close() error {
+	if l.db == nil {
+		return nil
+	}
+	return l.db.Close()
 }
 
 func (l *Ledger) Record(input RecordInput) (Event, error) {
@@ -163,7 +190,11 @@ func (l *Ledger) Record(input RecordInput) (Event, error) {
 		PreviousHash:          l.lastHash,
 	}
 	event.Hash = hashEvent(event)
-	if l.path != "" {
+	if l.db != nil {
+		if err := l.insertSQLiteEvent(event); err != nil {
+			return Event{}, err
+		}
+	} else if l.path != "" {
 		if err := appendEvent(l.path, event); err != nil {
 			return Event{}, err
 		}
@@ -188,6 +219,7 @@ func (l *Ledger) Snapshot(limit int) Snapshot {
 	return Snapshot{
 		Enabled:                      l.enabled,
 		ChainPath:                    l.path,
+		SQLitePath:                   l.sqlitePath,
 		Events:                       len(l.events),
 		LastHash:                     l.lastHash,
 		PricePerThousandTokensMicros: l.price,
@@ -228,6 +260,118 @@ func (l *Ledger) penaltyFor(rewardMicros int64, latencyMs int64) int64 {
 		return 0
 	}
 	return rewardMicros * l.latencyPenaltyBPS / 10000
+}
+
+func (l *Ledger) initSQLite() error {
+	_, err := l.db.Exec(`
+CREATE TABLE IF NOT EXISTS settlement_events (
+	event_index INTEGER PRIMARY KEY,
+	recorded_at TEXT NOT NULL,
+	request_id TEXT NOT NULL,
+	consumer_id TEXT NOT NULL,
+	provider_id TEXT NOT NULL,
+	node_id TEXT NOT NULL,
+	model TEXT NOT NULL,
+	privacy_tier TEXT NOT NULL,
+	prompt_tokens INTEGER NOT NULL,
+	completion_tokens INTEGER NOT NULL,
+	total_tokens INTEGER NOT NULL,
+	latency_ms INTEGER NOT NULL,
+	dispatch_attempts INTEGER NOT NULL,
+	price_micros INTEGER NOT NULL,
+	provider_reward_micros INTEGER NOT NULL,
+	provider_penalty_micros INTEGER NOT NULL,
+	previous_hash TEXT NOT NULL,
+	hash TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_settlement_hash ON settlement_events(hash);
+CREATE INDEX IF NOT EXISTS idx_settlement_consumer ON settlement_events(consumer_id);
+CREATE INDEX IF NOT EXISTS idx_settlement_provider ON settlement_events(provider_id);
+`)
+	return err
+}
+
+func (l *Ledger) loadSQLite() error {
+	rows, err := l.db.Query(`
+SELECT event_index, recorded_at, request_id, consumer_id, provider_id, node_id, model, privacy_tier,
+       prompt_tokens, completion_tokens, total_tokens, latency_ms, dispatch_attempts,
+       price_micros, provider_reward_micros, provider_penalty_micros, previous_hash, hash
+FROM settlement_events
+ORDER BY event_index ASC`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var event Event
+		var recordedAt string
+		if err := rows.Scan(
+			&event.Index,
+			&recordedAt,
+			&event.RequestID,
+			&event.ConsumerID,
+			&event.ProviderID,
+			&event.NodeID,
+			&event.Model,
+			&event.PrivacyTier,
+			&event.PromptTokens,
+			&event.CompletionTokens,
+			&event.TotalTokens,
+			&event.LatencyMs,
+			&event.DispatchAttempts,
+			&event.PriceMicros,
+			&event.ProviderRewardMicros,
+			&event.ProviderPenaltyMicros,
+			&event.PreviousHash,
+			&event.Hash,
+		); err != nil {
+			return err
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, recordedAt)
+		if err != nil {
+			return err
+		}
+		event.RecordedAt = parsed
+		l.events = append(l.events, event)
+		l.lastHash = event.Hash
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	verification := l.Verify()
+	if !verification.Valid {
+		return ErrInvalidChain
+	}
+	return nil
+}
+
+func (l *Ledger) insertSQLiteEvent(event Event) error {
+	_, err := l.db.Exec(`
+INSERT INTO settlement_events (
+	event_index, recorded_at, request_id, consumer_id, provider_id, node_id, model, privacy_tier,
+	prompt_tokens, completion_tokens, total_tokens, latency_ms, dispatch_attempts,
+	price_micros, provider_reward_micros, provider_penalty_micros, previous_hash, hash
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.Index,
+		event.RecordedAt.Format(time.RFC3339Nano),
+		event.RequestID,
+		event.ConsumerID,
+		event.ProviderID,
+		event.NodeID,
+		event.Model,
+		event.PrivacyTier,
+		event.PromptTokens,
+		event.CompletionTokens,
+		event.TotalTokens,
+		event.LatencyMs,
+		event.DispatchAttempts,
+		event.PriceMicros,
+		event.ProviderRewardMicros,
+		event.ProviderPenaltyMicros,
+		event.PreviousHash,
+		event.Hash,
+	)
+	return err
 }
 
 func (l *Ledger) load() error {

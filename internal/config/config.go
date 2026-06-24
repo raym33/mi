@@ -32,6 +32,7 @@ type CityConfig struct {
 	Name                  string            `yaml:"name"`
 	RequireProviderTokens bool              `yaml:"require_provider_tokens"`
 	UsageStorePath        string            `yaml:"usage_store_path"`
+	SQLitePath            string            `yaml:"sqlite_path"`
 	Consumers             []ConsumerAccount `yaml:"consumers"`
 	Providers             []ProviderAccount `yaml:"providers"`
 }
@@ -54,6 +55,7 @@ type ProviderAccount struct {
 type SettlementConfig struct {
 	Enabled                      bool   `yaml:"enabled"`
 	ChainPath                    string `yaml:"chain_path"`
+	SQLitePath                   string `yaml:"sqlite_path"`
 	PricePerThousandTokensMicros int64  `yaml:"price_per_thousand_tokens_micros"`
 	ProviderRewardShareBPS       int64  `yaml:"provider_reward_share_bps"`
 	TargetLatencyMs              int64  `yaml:"target_latency_ms"`

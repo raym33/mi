@@ -90,6 +90,59 @@ func TestUsagePersistsAcrossMarketRestart(t *testing.T) {
 	}
 }
 
+func TestUsagePersistsAcrossSQLiteMarketRestart(t *testing.T) {
+	sqlitePath := filepath.Join(t.TempDir(), "city.db")
+	cfg := config.CityConfig{
+		Enabled:               true,
+		RequireProviderTokens: true,
+		SQLitePath:            sqlitePath,
+		Consumers: []config.ConsumerAccount{{
+			ID:      "studio",
+			APIKeys: []string{"sk-test"},
+		}},
+		Providers: []config.ProviderAccount{{
+			ID:    "provider-a",
+			Token: "pk-test",
+		}},
+	}
+
+	market, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	if err := market.Record("studio", "provider-a", protocol.InferDone{PromptTokens: 7, OutputTokens: 11}); err != nil {
+		t.Fatalf("record usage: %v", err)
+	}
+	var journalMode string
+	if err := market.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		t.Fatalf("journal mode: %v", err)
+	}
+	if journalMode != "wal" {
+		t.Fatalf("journal mode = %q, want wal", journalMode)
+	}
+	if err := market.Close(); err != nil {
+		t.Fatalf("close market: %v", err)
+	}
+
+	restarted, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("restart market: %v", err)
+	}
+	defer restarted.Close()
+	consumerID, err := restarted.AuthenticateConsumer("sk-test")
+	if err != nil || consumerID != "studio" {
+		t.Fatalf("authenticate restarted consumer = %q, %v", consumerID, err)
+	}
+	providerID, err := restarted.AuthenticateProvider(protocol.Register{ProviderToken: "pk-test"})
+	if err != nil || providerID != "provider-a" {
+		t.Fatalf("authenticate restarted provider = %q, %v", providerID, err)
+	}
+	status := restarted.ConsumerStatus("studio")
+	if status.Usage.PromptTokens != 7 || status.Usage.CompletionTokens != 11 || status.Usage.TotalTokens != 18 {
+		t.Fatalf("usage after restart = %+v, want prompt=7 completion=11 total=18", status.Usage)
+	}
+}
+
 func TestDynamicEnrollmentPersistsHashedSecrets(t *testing.T) {
 	usagePath := filepath.Join(t.TempDir(), "city-state.json")
 	cfg := config.CityConfig{
@@ -156,6 +209,51 @@ func TestDynamicEnrollmentPersistsHashedSecrets(t *testing.T) {
 	}
 	if _, err := restarted.CreateProvider(CreateProviderInput{ID: "bad account"}); !errors.Is(err, ErrInvalidAccount) {
 		t.Fatalf("invalid provider = %v, want ErrInvalidAccount", err)
+	}
+}
+
+func TestDynamicEnrollmentPersistsHashedSecretsInSQLite(t *testing.T) {
+	sqlitePath := filepath.Join(t.TempDir(), "city.db")
+	cfg := config.CityConfig{
+		Enabled:               true,
+		RequireProviderTokens: true,
+		SQLitePath:            sqlitePath,
+	}
+
+	market, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	consumer, err := market.CreateConsumer(CreateConsumerInput{ID: "studio"})
+	if err != nil {
+		t.Fatalf("create consumer: %v", err)
+	}
+	provider, err := market.CreateProvider(CreateProviderInput{ID: "provider-a"})
+	if err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+	if err := market.Close(); err != nil {
+		t.Fatalf("close market: %v", err)
+	}
+
+	data, err := os.ReadFile(sqlitePath)
+	if err != nil {
+		t.Fatalf("read sqlite file: %v", err)
+	}
+	if strings.Contains(string(data), consumer.APIKey) || strings.Contains(string(data), provider.ProviderToken) {
+		t.Fatalf("sqlite file contains plaintext secret")
+	}
+
+	restarted, err := New(cfg, nil)
+	if err != nil {
+		t.Fatalf("restart market: %v", err)
+	}
+	defer restarted.Close()
+	if consumerID, err := restarted.AuthenticateConsumer(consumer.APIKey); err != nil || consumerID != "studio" {
+		t.Fatalf("authenticate restarted consumer = %q, %v", consumerID, err)
+	}
+	if providerID, err := restarted.AuthenticateProvider(protocol.Register{ProviderToken: provider.ProviderToken}); err != nil || providerID != "provider-a" {
+		t.Fatalf("authenticate restarted provider = %q, %v", providerID, err)
 	}
 }
 

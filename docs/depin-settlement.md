@@ -43,7 +43,7 @@ This is intentionally a small local chain rather than a public token chain. It g
 ```yaml
 settlement:
   enabled: true
-  chain_path: "data/settlement-chain.jsonl"
+  sqlite_path: "data/mi-settlement.db"
   price_per_thousand_tokens_micros: 1000
   provider_reward_share_bps: 7000
   target_latency_ms: 5000
@@ -53,7 +53,8 @@ settlement:
 Fields:
 
 - `enabled`: turns settlement events on or off.
-- `chain_path`: append-only JSONL chain path.
+- `sqlite_path`: SQLite/WAL settlement store path. This is recommended for city deployments.
+- `chain_path`: legacy append-only JSONL chain path, used when `sqlite_path` is empty.
 - `price_per_thousand_tokens_micros`: consumer debit rate per 1,000 tokens.
 - `provider_reward_share_bps`: provider share of the debit, in basis points.
 - `target_latency_ms`: soft SLA target for successful requests.

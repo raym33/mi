@@ -3,6 +3,7 @@ package city
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"github.com/raym33/mi/internal/config"
 	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
+	"github.com/raym33/mi/internal/sqlitestore"
 )
 
 var (
@@ -34,6 +36,8 @@ type Market struct {
 	name                  string
 	requireProviderTokens bool
 	usageStorePath        string
+	sqlitePath            string
+	db                    *sql.DB
 
 	mu           sync.Mutex
 	consumers    map[string]Consumer
@@ -143,6 +147,7 @@ func New(cfg config.CityConfig, legacyAPIKeys []string) (*Market, error) {
 		name:                  cfg.Name,
 		requireProviderTokens: cfg.RequireProviderTokens,
 		usageStorePath:        cfg.UsageStorePath,
+		sqlitePath:            cfg.SQLitePath,
 		consumers:             map[string]Consumer{},
 		providers:             map[string]Provider{},
 		apiKeys:               map[string]string{},
@@ -153,7 +158,21 @@ func New(cfg config.CityConfig, legacyAPIKeys []string) (*Market, error) {
 		providerUse:           map[string]*Usage{},
 		reservedUse:           map[string]int64{},
 	}
-	if cfg.UsageStorePath != "" {
+	if cfg.SQLitePath != "" {
+		db, err := sqlitestore.Open(cfg.SQLitePath)
+		if err != nil {
+			return nil, err
+		}
+		m.db = db
+		if err := m.initSQLite(); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		if err := m.loadSQLiteState(); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	} else if cfg.UsageStorePath != "" {
 		if err := m.loadState(cfg.UsageStorePath); err != nil {
 			return nil, err
 		}
@@ -205,6 +224,13 @@ func New(cfg config.CityConfig, legacyAPIKeys []string) (*Market, error) {
 
 func (m *Market) Enabled() bool {
 	return m.enabled
+}
+
+func (m *Market) Close() error {
+	if m.db == nil {
+		return nil
+	}
+	return m.db.Close()
 }
 
 func (m *Market) CreateConsumer(input CreateConsumerInput) (CreatedConsumer, error) {
@@ -561,6 +587,151 @@ func (m *Market) addUsage(bucket map[string]*Usage, accountID string, done proto
 	usage.UpdatedAt = time.Now()
 }
 
+func (m *Market) initSQLite() error {
+	_, err := m.db.Exec(`
+CREATE TABLE IF NOT EXISTS city_consumers (
+	id TEXT PRIMARY KEY,
+	display_name TEXT NOT NULL,
+	total_token_limit INTEGER NOT NULL DEFAULT 0,
+	disabled INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS city_consumer_keys (
+	account_id TEXT NOT NULL,
+	key_hash TEXT NOT NULL PRIMARY KEY
+);
+CREATE INDEX IF NOT EXISTS idx_city_consumer_keys_account ON city_consumer_keys(account_id);
+CREATE TABLE IF NOT EXISTS city_providers (
+	id TEXT PRIMARY KEY,
+	display_name TEXT NOT NULL,
+	disabled INTEGER NOT NULL DEFAULT 0,
+	privacy_mode TEXT NOT NULL,
+	privacy_tiers_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS city_provider_tokens (
+	account_id TEXT NOT NULL,
+	token_hash TEXT NOT NULL PRIMARY KEY
+);
+CREATE INDEX IF NOT EXISTS idx_city_provider_tokens_account ON city_provider_tokens(account_id);
+CREATE TABLE IF NOT EXISTS city_usage (
+	kind TEXT NOT NULL,
+	account_id TEXT NOT NULL,
+	requests INTEGER NOT NULL,
+	prompt_tokens INTEGER NOT NULL,
+	completion_tokens INTEGER NOT NULL,
+	total_tokens INTEGER NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY(kind, account_id)
+);
+`)
+	return err
+}
+
+func (m *Market) loadSQLiteState() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	consumerRows, err := m.db.Query(`SELECT id, display_name, total_token_limit, disabled FROM city_consumers`)
+	if err != nil {
+		return err
+	}
+	defer consumerRows.Close()
+	for consumerRows.Next() {
+		var consumer Consumer
+		var disabled int
+		if err := consumerRows.Scan(&consumer.ID, &consumer.DisplayName, &consumer.TotalTokenLimit, &disabled); err != nil {
+			return err
+		}
+		consumer.Disabled = disabled != 0
+		m.consumers[consumer.ID] = consumer
+	}
+	if err := consumerRows.Err(); err != nil {
+		return err
+	}
+
+	keyRows, err := m.db.Query(`SELECT key_hash, account_id FROM city_consumer_keys`)
+	if err != nil {
+		return err
+	}
+	defer keyRows.Close()
+	for keyRows.Next() {
+		var hash string
+		var accountID string
+		if err := keyRows.Scan(&hash, &accountID); err != nil {
+			return err
+		}
+		m.apiKeyHashes[hash] = accountID
+	}
+	if err := keyRows.Err(); err != nil {
+		return err
+	}
+
+	providerRows, err := m.db.Query(`SELECT id, display_name, disabled, privacy_mode, privacy_tiers_json FROM city_providers`)
+	if err != nil {
+		return err
+	}
+	defer providerRows.Close()
+	for providerRows.Next() {
+		var provider Provider
+		var disabled int
+		var tiersJSON string
+		if err := providerRows.Scan(&provider.ID, &provider.DisplayName, &disabled, &provider.PrivacyMode, &tiersJSON); err != nil {
+			return err
+		}
+		provider.Disabled = disabled != 0
+		if tiersJSON != "" {
+			if err := json.Unmarshal([]byte(tiersJSON), &provider.PrivacyTiers); err != nil {
+				return err
+			}
+		}
+		m.providers[provider.ID] = provider
+	}
+	if err := providerRows.Err(); err != nil {
+		return err
+	}
+
+	tokenRows, err := m.db.Query(`SELECT token_hash, account_id FROM city_provider_tokens`)
+	if err != nil {
+		return err
+	}
+	defer tokenRows.Close()
+	for tokenRows.Next() {
+		var hash string
+		var accountID string
+		if err := tokenRows.Scan(&hash, &accountID); err != nil {
+			return err
+		}
+		m.tokenHashes[hash] = accountID
+	}
+	if err := tokenRows.Err(); err != nil {
+		return err
+	}
+
+	usageRows, err := m.db.Query(`SELECT kind, account_id, requests, prompt_tokens, completion_tokens, total_tokens, updated_at FROM city_usage`)
+	if err != nil {
+		return err
+	}
+	defer usageRows.Close()
+	for usageRows.Next() {
+		var kind string
+		var usage Usage
+		var updatedAt string
+		if err := usageRows.Scan(&kind, &usage.AccountID, &usage.Requests, &usage.PromptTokens, &usage.CompletionTokens, &usage.TotalTokens, &updatedAt); err != nil {
+			return err
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
+			usage.UpdatedAt = parsed
+		}
+		copyUsage := usage
+		switch kind {
+		case "consumer":
+			m.consumerUse[usage.AccountID] = &copyUsage
+		case "provider":
+			m.providerUse[usage.AccountID] = &copyUsage
+		}
+	}
+	return usageRows.Err()
+}
+
 func (m *Market) loadState(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -608,6 +779,9 @@ func (m *Market) loadState(path string) error {
 }
 
 func (m *Market) persistLocked() error {
+	if m.db != nil {
+		return m.persistSQLiteLocked()
+	}
 	if m.usageStorePath == "" {
 		return nil
 	}
@@ -631,6 +805,75 @@ func (m *Market) persistLocked() error {
 		return err
 	}
 	return os.Rename(tmp, m.usageStorePath)
+}
+
+func (m *Market) persistSQLiteLocked() error {
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, table := range []string{"city_consumers", "city_consumer_keys", "city_providers", "city_provider_tokens", "city_usage"} {
+		if _, err := tx.Exec("DELETE FROM " + table); err != nil {
+			return err
+		}
+	}
+	for _, consumer := range consumerMapValues(m.consumers) {
+		if _, err := tx.Exec(
+			`INSERT INTO city_consumers (id, display_name, total_token_limit, disabled) VALUES (?, ?, ?, ?)`,
+			consumer.ID, consumer.DisplayName, consumer.TotalTokenLimit, boolInt(consumer.Disabled),
+		); err != nil {
+			return err
+		}
+	}
+	for hash, accountID := range m.apiKeyHashes {
+		if _, err := tx.Exec(`INSERT INTO city_consumer_keys (account_id, key_hash) VALUES (?, ?)`, accountID, hash); err != nil {
+			return err
+		}
+	}
+	for _, provider := range providerMapValues(m.providers) {
+		tiersJSON, err := json.Marshal(provider.PrivacyTiers)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO city_providers (id, display_name, disabled, privacy_mode, privacy_tiers_json) VALUES (?, ?, ?, ?, ?)`,
+			provider.ID, provider.DisplayName, boolInt(provider.Disabled), provider.PrivacyMode, string(tiersJSON),
+		); err != nil {
+			return err
+		}
+	}
+	for hash, accountID := range m.tokenHashes {
+		if _, err := tx.Exec(`INSERT INTO city_provider_tokens (account_id, token_hash) VALUES (?, ?)`, accountID, hash); err != nil {
+			return err
+		}
+	}
+	for _, usage := range usageMapValues(m.consumerUse) {
+		if err := insertSQLiteUsage(tx, "consumer", usage); err != nil {
+			return err
+		}
+	}
+	for _, usage := range usageMapValues(m.providerUse) {
+		if err := insertSQLiteUsage(tx, "provider", usage); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func insertSQLiteUsage(tx *sql.Tx, kind string, usage Usage) error {
+	_, err := tx.Exec(
+		`INSERT INTO city_usage (kind, account_id, requests, prompt_tokens, completion_tokens, total_tokens, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		kind,
+		usage.AccountID,
+		usage.Requests,
+		usage.PromptTokens,
+		usage.CompletionTokens,
+		usage.TotalTokens,
+		usage.UpdatedAt.Format(time.RFC3339Nano),
+	)
+	return err
 }
 
 func (m *Market) persistedConsumersLocked() []persistedConsumer {
@@ -757,6 +1000,13 @@ func (m *Market) removeProviderSecretsLocked(accountID string) {
 func hashSecret(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func randomSecret(prefix string) (string, error) {
