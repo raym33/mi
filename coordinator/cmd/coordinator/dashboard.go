@@ -79,7 +79,7 @@ const adminDashboardHTML = `<!doctype html>
       justify-content: flex-end;
       align-items: center;
     }
-    input, button {
+    input, select, button {
       height: 34px;
       border-radius: 6px;
       border: 1px solid var(--line);
@@ -95,6 +95,10 @@ const adminDashboardHTML = `<!doctype html>
       min-width: 118px;
       width: 128px;
     }
+    select {
+      padding: 0 30px 0 10px;
+      min-width: 160px;
+    }
     button {
       padding: 0 12px;
       cursor: pointer;
@@ -104,6 +108,10 @@ const adminDashboardHTML = `<!doctype html>
       border-color: var(--blue);
       background: var(--blue);
       color: #fff;
+    }
+    button.danger {
+      border-color: #f5c2bd;
+      color: var(--red);
     }
     button:disabled {
       cursor: not-allowed;
@@ -303,6 +311,81 @@ const adminDashboardHTML = `<!doctype html>
       padding: 10px 12px;
       white-space: pre-wrap;
     }
+    .secretbox {
+      display: none;
+      margin-bottom: 12px;
+      border: 1px solid #b6e3ce;
+      background: #effaf4;
+      color: #14533a;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: var(--shadow);
+    }
+    .secret-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .secret-note {
+      margin-top: 2px;
+      font-size: 12px;
+      color: #147a50;
+    }
+    .secret-actions, .action-buttons, .form-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .secret-value {
+      margin-top: 10px;
+      padding: 9px 10px;
+      border: 1px solid #b6e3ce;
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      word-break: break-all;
+    }
+    .operator-forms {
+      display: grid;
+      gap: 16px;
+    }
+    .admin-form {
+      display: grid;
+      gap: 10px;
+    }
+    .form-title {
+      font-weight: 700;
+    }
+    .form-fields {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .form-fields label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .form-fields input, .form-fields select {
+      width: 100%;
+      min-width: 0;
+    }
+    .form-actions {
+      justify-content: flex-end;
+    }
+    .action-buttons {
+      min-width: 230px;
+    }
+    .action-buttons button {
+      height: 28px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
     footer {
       color: var(--muted);
       font-size: 12px;
@@ -320,6 +403,7 @@ const adminDashboardHTML = `<!doctype html>
       .metric .value { font-size: 20px; }
       main { padding: 14px 12px 28px; }
       .split { grid-template-columns: 1fr; }
+      .form-fields { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -346,6 +430,19 @@ const adminDashboardHTML = `<!doctype html>
       <div id="lastUpdated">Not loaded</div>
     </div>
     <div id="errors" class="errorbox"></div>
+    <div id="secretBox" class="secretbox" role="status" aria-live="polite">
+      <div class="secret-head">
+        <div>
+          <div class="strong" id="secretTitle">One-time secret</div>
+          <div class="secret-note">Shown only once and must be stored now.</div>
+        </div>
+        <div class="secret-actions">
+          <button id="copySecret" type="button">Copy</button>
+          <button id="dismissSecret" type="button">Dismiss</button>
+        </div>
+      </div>
+      <div id="secretValue" class="secret-value mono"></div>
+    </div>
 
     <section class="grid metrics" aria-label="Key metrics">
       <div class="metric"><div class="label">Healthy nodes</div><div id="healthyNodes" class="value">-</div><div id="nodeSub" class="sub"></div></div>
@@ -392,6 +489,7 @@ const adminDashboardHTML = `<!doctype html>
                   <th>Rewards</th>
                   <th>Challenges</th>
                   <th>Notes</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="providersBody"></tbody>
@@ -411,6 +509,7 @@ const adminDashboardHTML = `<!doctype html>
                   <th>Tokens</th>
                   <th>Quota</th>
                   <th>Updated</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="consumersBody"></tbody>
@@ -420,6 +519,41 @@ const adminDashboardHTML = `<!doctype html>
       </div>
 
       <aside>
+        <section class="panel">
+          <h2><span>Operator Write Actions</span><span class="pill warn">Admin</span></h2>
+          <div class="panel-body">
+            <div class="operator-forms">
+              <form id="createConsumer" class="admin-form" autocomplete="off">
+                <div class="form-title">Create consumer</div>
+                <div class="form-fields">
+                  <label>ID <input id="createConsumerID" name="id" required placeholder="consumer-id"></label>
+                  <label>Display name <input id="createConsumerName" name="display_name" placeholder="Display name"></label>
+                  <label>Total token limit <input id="createConsumerLimit" name="total_token_limit" type="number" min="0" step="1" placeholder="optional"></label>
+                </div>
+                <div class="form-actions">
+                  <button id="createConsumerSubmit" class="primary" type="submit">Create consumer</button>
+                </div>
+              </form>
+
+              <form id="createProvider" class="admin-form" autocomplete="off">
+                <div class="form-title">Create provider</div>
+                <div class="form-fields">
+                  <label>ID <input id="createProviderID" name="id" required placeholder="provider-id"></label>
+                  <label>Display name <input id="createProviderName" name="display_name" placeholder="Display name"></label>
+                  <label>Privacy mode <select id="createProviderPrivacy" name="privacy_mode">
+                    <option value="public">public</option>
+                    <option value="community">community</option>
+                    <option value="private">private</option>
+                  </select></label>
+                </div>
+                <div class="form-actions">
+                  <button id="createProviderSubmit" class="primary" type="submit">Create provider</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </section>
+
         <section class="panel">
           <h2><span>Network</span><span id="networkBadge" class="pill">-</span></h2>
           <div id="networkBody" class="panel-body"></div>
@@ -463,6 +597,7 @@ const adminDashboardHTML = `<!doctype html>
     const moneyFmt = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
     const compactFmt = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
     let timer = null;
+    let secretText = '';
 
     const state = {
       status: null,
@@ -494,6 +629,133 @@ const adminDashboardHTML = `<!doctype html>
       const res = await fetch(path, { headers: admin ? headers() : { 'Accept': 'application/json' }, cache: 'no-store' });
       if (!res.ok) throw new Error(path + ' returned ' + res.status);
       return res.json();
+    }
+
+    async function postJSON(path, body) {
+      const h = headers();
+      h['Content-Type'] = 'application/json';
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: h,
+        body: JSON.stringify(body || {})
+      });
+      return parseActionResponse(res, path);
+    }
+
+    async function sendAction(path, options) {
+      options = options || {};
+      if (!requireAdminToken()) {
+        return null;
+      }
+      const button = options.button || null;
+      if (button) button.disabled = true;
+      try {
+        let data;
+        if ((options.method || 'POST') === 'POST') {
+          data = await postJSON(path, options.body || {});
+        } else {
+          const res = await fetch(path, { method: options.method, headers: headers() });
+          data = await parseActionResponse(res, path);
+        }
+        showReturnedSecret(data);
+        await refresh();
+        return data;
+      } catch (err) {
+        showError(err.message);
+        return null;
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+
+    async function parseActionResponse(res, path) {
+      const text = await res.text();
+      let data = {};
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch (err) {
+          data = { message: text.trim() };
+        }
+      }
+      if (!res.ok) {
+        const message = data && data.error && data.error.message ? data.error.message : data.message || (path + ' returned ' + res.status);
+        throw new Error(message);
+      }
+      return data;
+    }
+
+    function requireAdminToken() {
+      if (!token()) {
+        showError('Enter the admin token before using admin actions.');
+        return false;
+      }
+      return true;
+    }
+
+    function showError(message) {
+      $('errors').style.display = 'block';
+      $('errors').textContent = message || 'Request failed';
+    }
+
+    function showReturnedSecret(data) {
+      if (data && data.api_key) {
+        showSecret('Consumer API key', data.api_key);
+      }
+      if (data && data.provider_token) {
+        showSecret('Provider token', data.provider_token);
+      }
+    }
+
+    function showSecret(title, value) {
+      secretText = String(value || '');
+      $('secretTitle').textContent = title;
+      $('secretValue').textContent = secretText;
+      $('secretBox').style.display = 'block';
+    }
+
+    function hideSecret() {
+      secretText = '';
+      $('secretValue').textContent = '';
+      $('secretBox').style.display = 'none';
+    }
+
+    function copyText(value, button) {
+      if (!value) {
+        showError('Nothing to copy.');
+        return;
+      }
+      const done = () => {
+        if (!button) return;
+        const old = button.textContent;
+        button.textContent = 'Copied';
+        setTimeout(() => {
+          button.textContent = old;
+        }, 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(value).then(done).catch(() => fallbackCopy(value, done));
+        return;
+      }
+      fallbackCopy(value, done);
+    }
+
+    function fallbackCopy(value, done) {
+      const area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.left = '-9999px';
+      document.body.appendChild(area);
+      area.select();
+      try {
+        document.execCommand('copy');
+        done();
+      } catch (err) {
+        showError('Copy failed. Select and copy the value manually.');
+      } finally {
+        document.body.removeChild(area);
+      }
     }
 
     function saveSettings() {
@@ -638,7 +900,7 @@ const adminDashboardHTML = `<!doctype html>
       const providers = (state.reputation && state.reputation.providers) || [];
       $('providersCount').textContent = providers.length;
       if (!providers.length) {
-        $('providersBody').innerHTML = '<tr><td colspan="7" class="empty">No providers yet</td></tr>';
+        $('providersBody').innerHTML = '<tr><td colspan="8" class="empty">No providers yet</td></tr>';
         return;
       }
       $('providersBody').innerHTML = providers.map((p) => {
@@ -651,6 +913,7 @@ const adminDashboardHTML = `<!doctype html>
           td(formatMicros(p.reward_micros || 0) + (p.penalty_micros ? '<div class="muted">penalty ' + formatMicros(p.penalty_micros) + '</div>' : '')) +
           td(formatBPS(p.challenge_pass_rate_bps) + '<div class="muted">' + esc(p.challenges || 0) + ' checks</div>') +
           td(chips(p.notes || [])) +
+          td(providerActions(p)) +
           '</tr>';
       }).join('');
     }
@@ -661,7 +924,7 @@ const adminDashboardHTML = `<!doctype html>
       const usage = indexBy(city.consumer_usage || [], 'account_id');
       $('consumersCount').textContent = consumers.length;
       if (!consumers.length) {
-        $('consumersBody').innerHTML = '<tr><td colspan="6" class="empty">No consumers configured</td></tr>';
+        $('consumersBody').innerHTML = '<tr><td colspan="7" class="empty">No consumers configured</td></tr>';
         return;
       }
       $('consumersBody').innerHTML = consumers.map((c) => {
@@ -678,6 +941,7 @@ const adminDashboardHTML = `<!doctype html>
           td(fmt.format(used)) +
           td(quota) +
           td(timeAgo(u.updated_at)) +
+          td(consumerActions(c)) +
           '</tr>';
       }).join('');
     }
@@ -719,7 +983,7 @@ const adminDashboardHTML = `<!doctype html>
       $('integrityBody').innerHTML = [
         kv('Settlement', statusText(i.settlement)),
         kv('Challenges', statusText(i.challenges)),
-        kv('Anchor hash', anchor.anchor_hash ? '<span class="mono">' + esc(shortHash(anchor.anchor_hash)) + '</span>' : '-'),
+        kv('Anchor hash', anchor.anchor_hash ? '<span class="mono">' + esc(shortHash(anchor.anchor_hash)) + '</span> <button id="copyAnchorHash" type="button">Copy anchor hash</button>' : '-'),
         kv('Generated', i.generated_at ? new Date(i.generated_at).toLocaleString() : '-')
       ].join('');
     }
@@ -763,6 +1027,25 @@ const adminDashboardHTML = `<!doctype html>
       return '<div class="chips">' + values.slice(0, 8).map((v) => '<span class="chip">' + esc(v) + '</span>').join('') + (values.length > 8 ? '<span class="chip">+' + (values.length - 8) + '</span>' : '') + '</div>';
     }
 
+    function consumerActions(c) {
+      return '<div class="action-buttons">' +
+        actionButton('rotate-consumer', 'Rotate key', 'data-consumer-id', c.id, c.disabled) +
+        actionButton('disable-consumer', 'Disable', 'data-consumer-id', c.id, c.disabled, 'danger') +
+        '</div>';
+    }
+
+    function providerActions(p) {
+      return '<div class="action-buttons">' +
+        actionButton('rotate-provider', 'Rotate token', 'data-provider-id', p.provider_id, p.disabled) +
+        actionButton('disable-provider', 'Disable', 'data-provider-id', p.provider_id, p.disabled, 'danger') +
+        actionButton('run-challenge', 'Run challenge', 'data-provider-id', p.provider_id, p.disabled) +
+        '</div>';
+    }
+
+    function actionButton(action, label, attr, id, disabled, cls) {
+      return '<button type="button" class="' + esc(cls || '') + '" data-action="' + esc(action) + '" ' + attr + '="' + esc(id) + '"' + (disabled ? ' disabled' : '') + '>' + esc(label) + '</button>';
+    }
+
     function formatBPS(value) {
       if (value === undefined || value === null || value === '') return '-';
       return (Number(value) / 100).toFixed(1).replace(/\.0$/, '') + '%';
@@ -794,6 +1077,69 @@ const adminDashboardHTML = `<!doctype html>
     function clamp(value, min, max) {
       return Math.max(min, Math.min(max, Number(value || 0)));
     }
+
+    $('createConsumer').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = {
+        id: $('createConsumerID').value.trim(),
+        display_name: $('createConsumerName').value.trim()
+      };
+      const limit = $('createConsumerLimit').value.trim();
+      if (limit !== '') {
+        body.total_token_limit = Number(limit);
+      }
+      const result = await sendAction('/admin/consumers', { button: $('createConsumerSubmit'), body: body });
+      if (result) event.currentTarget.reset();
+    });
+
+    $('createProvider').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = {
+        id: $('createProviderID').value.trim(),
+        display_name: $('createProviderName').value.trim(),
+        privacy_mode: $('createProviderPrivacy').value
+      };
+      const result = await sendAction('/admin/providers', { button: $('createProviderSubmit'), body: body });
+      if (result) event.currentTarget.reset();
+    });
+
+    document.addEventListener('click', async (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      if (button.id === 'copySecret') {
+        copyText(secretText, button);
+        return;
+      }
+      if (button.id === 'dismissSecret') {
+        hideSecret();
+        return;
+      }
+      if (button.id === 'copyAnchorHash') {
+        const anchor = (state.integrity && state.integrity.anchor) || {};
+        copyText(anchor.anchor_hash || '', button);
+        return;
+      }
+      const action = button.getAttribute('data-action');
+      if (!action) return;
+      if (!requireAdminToken()) return;
+      const consumerID = button.getAttribute('data-consumer-id') || '';
+      const providerID = button.getAttribute('data-provider-id') || '';
+      if (action === 'rotate-consumer') {
+        await sendAction('/admin/consumers/' + encodeURIComponent(consumerID) + '/rotate-key', { button: button, body: {} });
+      }
+      if (action === 'disable-consumer' && window.confirm('Disable consumer ' + consumerID + '?')) {
+        await sendAction('/admin/consumers/' + encodeURIComponent(consumerID), { button: button, method: 'DELETE' });
+      }
+      if (action === 'rotate-provider') {
+        await sendAction('/admin/providers/' + encodeURIComponent(providerID) + '/rotate-token', { button: button, body: {} });
+      }
+      if (action === 'disable-provider' && window.confirm('Disable provider ' + providerID + '?')) {
+        await sendAction('/admin/providers/' + encodeURIComponent(providerID), { button: button, method: 'DELETE' });
+      }
+      if (action === 'run-challenge') {
+        await sendAction('/admin/challenges/run?provider_id=' + encodeURIComponent(providerID), { button: button, body: {} });
+      }
+    });
 
     $('saveToken').addEventListener('click', saveSettings);
     $('refresh').addEventListener('click', refresh);

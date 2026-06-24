@@ -1,4 +1,4 @@
-.PHONY: build test run-coordinator run-node run-city-coordinator run-city-node run-city-coordinator-tls run-city-node-tls dev-certs smoke city-smoke city-enroll
+.PHONY: build test run-coordinator run-node run-city-coordinator run-city-node run-city-coordinator-tls run-city-node-tls dev-certs smoke city-smoke city-enroll backup anchor-hash
 
 build:
 	go build -o bin/coordinator ./coordinator/cmd/coordinator
@@ -36,3 +36,9 @@ city-smoke:
 
 city-enroll:
 	bash scripts/city-enroll.sh
+
+backup:
+	bash scripts/backup-state.sh
+
+anchor-hash:
+	bash scripts/anchor-hash.sh

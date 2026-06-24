@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -96,10 +97,12 @@ func main() {
 	mux.HandleFunc("GET /ws/node", s.nodeWebSocket)
 	mux.HandleFunc("GET /admin", s.adminDashboardRedirect)
 	mux.HandleFunc("GET /admin/dashboard", s.adminDashboard)
+	mux.HandleFunc("GET /admin/metrics", s.requireAdmin(s.adminMetrics))
 	mux.HandleFunc("GET /admin/nodes", s.requireAdmin(s.adminNodes))
 	mux.HandleFunc("GET /admin/city", s.requireAdmin(s.adminCity))
 	mux.HandleFunc("GET /admin/settlement", s.requireAdmin(s.adminSettlement))
 	mux.HandleFunc("GET /admin/settlement/verify", s.requireAdmin(s.adminSettlementVerify))
+	mux.HandleFunc("GET /admin/payouts.csv", s.requireAdmin(s.adminPayoutsCSV))
 	mux.HandleFunc("GET /admin/reputation", s.requireAdmin(s.adminReputation))
 	mux.HandleFunc("GET /admin/integrity", s.requireAdmin(s.adminIntegrity))
 	mux.HandleFunc("GET /admin/challenges", s.requireAdmin(s.adminChallenges))
@@ -202,6 +205,207 @@ func (s *server) adminNodes(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.registry.Snapshot())
 }
 
+func (s *server) adminMetrics(w http.ResponseWriter, _ *http.Request) {
+	var status scheduler.NetworkStatus
+	var nodes []scheduler.NodeView
+	if s.registry != nil {
+		status = s.registry.NetworkStatus()
+		nodes = s.registry.Snapshot()
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+
+	var settlementSnapshot settlement.Snapshot
+	if s.settlement != nil {
+		settlementSnapshot = s.settlement.Snapshot(0)
+	}
+	providerBalances := append([]settlement.Balance(nil), settlementSnapshot.ProviderBalances...)
+	sort.Slice(providerBalances, func(i, j int) bool { return providerBalances[i].AccountID < providerBalances[j].AccountID })
+
+	var challengeSnapshot challenge.Snapshot
+	if s.challenges != nil {
+		challengeSnapshot = s.challenges.Snapshot(0)
+	}
+	providerChallenges := append([]challenge.ProviderSummary(nil), challengeSnapshot.Summaries...)
+	sort.Slice(providerChallenges, func(i, j int) bool { return providerChallenges[i].ProviderID < providerChallenges[j].ProviderID })
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+
+	writePrometheusHeader(w, "mi_nodes", "Registered nodes.", "gauge")
+	writePrometheusSample(w, "mi_nodes", nil, prometheusInt(int64(status.Nodes)))
+	writePrometheusHeader(w, "mi_healthy_nodes", "Healthy nodes available for routing.", "gauge")
+	writePrometheusSample(w, "mi_healthy_nodes", nil, prometheusInt(int64(status.HealthyNodes)))
+	writePrometheusHeader(w, "mi_cooldown_nodes", "Nodes currently in cooldown.", "gauge")
+	writePrometheusSample(w, "mi_cooldown_nodes", nil, prometheusInt(int64(status.CooldownNodes)))
+	writePrometheusHeader(w, "mi_active_requests", "Active inference requests across healthy nodes.", "gauge")
+	writePrometheusSample(w, "mi_active_requests", nil, prometheusInt(int64(status.ActiveRequests)))
+	writePrometheusHeader(w, "mi_available_slots", "Available request slots across healthy nodes.", "gauge")
+	writePrometheusSample(w, "mi_available_slots", nil, prometheusInt(int64(status.AvailableSlots)))
+	writePrometheusHeader(w, "mi_max_concurrent", "Maximum concurrent request capacity across healthy nodes.", "gauge")
+	writePrometheusSample(w, "mi_max_concurrent", nil, prometheusInt(int64(status.MaxConcurrent)))
+	writePrometheusHeader(w, "mi_total_memory_free_mb", "Total free memory advertised by healthy nodes in megabytes.", "gauge")
+	writePrometheusSample(w, "mi_total_memory_free_mb", nil, prometheusUint(status.TotalMemoryFreeMB))
+	writePrometheusHeader(w, "mi_average_latency_ms", "Average observed latency across healthy nodes in milliseconds.", "gauge")
+	writePrometheusSample(w, "mi_average_latency_ms", nil, prometheusInt(status.AverageLatencyMs))
+	writePrometheusHeader(w, "mi_average_ttft_ms", "Average observed time to first token across healthy nodes in milliseconds.", "gauge")
+	writePrometheusSample(w, "mi_average_ttft_ms", nil, prometheusInt(status.AverageTTFTMs))
+	writePrometheusHeader(w, "mi_average_tokens_per_second", "Average observed output tokens per second across healthy nodes.", "gauge")
+	writePrometheusSample(w, "mi_average_tokens_per_second", nil, prometheusFloat(status.AverageTokensPerSecond))
+
+	writePrometheusHeader(w, "mi_node_healthy", "Node health state, 1 for healthy and 0 for unhealthy.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_healthy", nodePrometheusLabels(node), prometheusBool(node.Healthy))
+	}
+	writePrometheusHeader(w, "mi_node_active", "Active requests on the node.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_active", nodePrometheusLabels(node), prometheusInt(int64(node.Active)))
+	}
+	writePrometheusHeader(w, "mi_node_max_concurrent", "Maximum concurrent requests accepted by the node.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_max_concurrent", nodePrometheusLabels(node), prometheusInt(int64(node.MaxConcurrent)))
+	}
+	writePrometheusHeader(w, "mi_node_completed_requests_total", "Completed requests observed for the node.", "counter")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_completed_requests_total", nodePrometheusLabels(node), prometheusInt(node.CompletedRequests))
+	}
+	writePrometheusHeader(w, "mi_node_failed_requests_total", "Failed requests observed for the node.", "counter")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_failed_requests_total", nodePrometheusLabels(node), prometheusInt(node.FailedRequests))
+	}
+	writePrometheusHeader(w, "mi_node_observed_latency_ms", "Node observed latency in milliseconds.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_observed_latency_ms", nodePrometheusLabels(node), prometheusInt(node.ObservedLatencyMs))
+	}
+	writePrometheusHeader(w, "mi_node_observed_ttft_ms", "Node observed time to first token in milliseconds.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_observed_ttft_ms", nodePrometheusLabels(node), prometheusInt(node.ObservedTTFTMs))
+	}
+	writePrometheusHeader(w, "mi_node_observed_tokens_per_second", "Node observed output tokens per second.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_observed_tokens_per_second", nodePrometheusLabels(node), prometheusFloat(node.ObservedTokensPerSecond))
+	}
+	writePrometheusHeader(w, "mi_node_provider_score", "Provider reputation score applied to the node.", "gauge")
+	for _, node := range nodes {
+		writePrometheusSample(w, "mi_node_provider_score", nodePrometheusLabels(node), prometheusInt(int64(node.ProviderScore)))
+	}
+
+	writePrometheusHeader(w, "mi_settlement_events_total", "Settlement events recorded by the coordinator.", "counter")
+	writePrometheusSample(w, "mi_settlement_events_total", nil, prometheusInt(int64(settlementSnapshot.Events)))
+	writePrometheusHeader(w, "mi_provider_reward_micros", "Provider reward balance in micros.", "gauge")
+	for _, balance := range providerBalances {
+		writePrometheusSample(w, "mi_provider_reward_micros", providerPrometheusLabels(balance.AccountID), prometheusInt(balance.RewardMicros))
+	}
+	writePrometheusHeader(w, "mi_provider_penalty_micros", "Provider penalty balance in micros.", "gauge")
+	for _, balance := range providerBalances {
+		writePrometheusSample(w, "mi_provider_penalty_micros", providerPrometheusLabels(balance.AccountID), prometheusInt(balance.PenaltyMicros))
+	}
+	writePrometheusHeader(w, "mi_provider_total_tokens", "Provider token balance from settlement accounting.", "gauge")
+	for _, balance := range providerBalances {
+		writePrometheusSample(w, "mi_provider_total_tokens", providerPrometheusLabels(balance.AccountID), prometheusInt(balance.TotalTokens))
+	}
+	writePrometheusHeader(w, "mi_provider_events_total", "Settlement events recorded for the provider.", "counter")
+	for _, balance := range providerBalances {
+		writePrometheusSample(w, "mi_provider_events_total", providerPrometheusLabels(balance.AccountID), prometheusInt(balance.Events))
+	}
+
+	writePrometheusHeader(w, "mi_provider_challenges_total", "Challenges recorded for the provider.", "counter")
+	for _, summary := range providerChallenges {
+		writePrometheusSample(w, "mi_provider_challenges_total", providerPrometheusLabels(summary.ProviderID), prometheusInt(summary.Challenges))
+	}
+	writePrometheusHeader(w, "mi_provider_challenges_passed_total", "Challenges passed by the provider.", "counter")
+	for _, summary := range providerChallenges {
+		writePrometheusSample(w, "mi_provider_challenges_passed_total", providerPrometheusLabels(summary.ProviderID), prometheusInt(summary.Passed))
+	}
+	writePrometheusHeader(w, "mi_provider_challenges_failed_total", "Challenges failed by the provider.", "counter")
+	for _, summary := range providerChallenges {
+		writePrometheusSample(w, "mi_provider_challenges_failed_total", providerPrometheusLabels(summary.ProviderID), prometheusInt(summary.Failed))
+	}
+	writePrometheusHeader(w, "mi_provider_challenge_pass_rate_bps", "Provider challenge pass rate in basis points.", "gauge")
+	for _, summary := range providerChallenges {
+		writePrometheusSample(w, "mi_provider_challenge_pass_rate_bps", providerPrometheusLabels(summary.ProviderID), prometheusInt(summary.PassRateBPS))
+	}
+}
+
+type prometheusLabel struct {
+	Name      string
+	Value     string
+	OmitEmpty bool
+}
+
+func writePrometheusHeader(w io.Writer, name string, help string, metricType string) {
+	fmt.Fprintf(w, "# HELP %s %s\n", name, help)
+	fmt.Fprintf(w, "# TYPE %s %s\n", name, metricType)
+}
+
+func writePrometheusSample(w io.Writer, name string, labels []prometheusLabel, value string) {
+	fmt.Fprintf(w, "%s%s %s\n", name, prometheusLabelSet(labels), value)
+}
+
+func prometheusLabelSet(labels []prometheusLabel) string {
+	var b strings.Builder
+	for _, label := range labels {
+		if label.OmitEmpty && label.Value == "" {
+			continue
+		}
+		if b.Len() == 0 {
+			b.WriteByte('{')
+		} else {
+			b.WriteByte(',')
+		}
+		b.WriteString(label.Name)
+		b.WriteString("=\"")
+		b.WriteString(escapePrometheusLabel(label.Value))
+		b.WriteByte('"')
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+var prometheusLabelEscaper = strings.NewReplacer(
+	"\\", "\\\\",
+	"\"", "\\\"",
+	"\n", "\\n",
+)
+
+func escapePrometheusLabel(value string) string {
+	return prometheusLabelEscaper.Replace(value)
+}
+
+func nodePrometheusLabels(node scheduler.NodeView) []prometheusLabel {
+	// privacy_tier is omitted because snapshots have no clean per-tier aggregate today.
+	return []prometheusLabel{
+		{Name: "node_id", Value: node.ID},
+		{Name: "provider_id", Value: node.ProviderID},
+		{Name: "backend", Value: node.Backend, OmitEmpty: true},
+		{Name: "device_kind", Value: node.DeviceKind, OmitEmpty: true},
+	}
+}
+
+func providerPrometheusLabels(providerID string) []prometheusLabel {
+	return []prometheusLabel{{Name: "provider_id", Value: providerID}}
+}
+
+func prometheusBool(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
+}
+
+func prometheusInt(value int64) string {
+	return strconv.FormatInt(value, 10)
+}
+
+func prometheusUint(value uint64) string {
+	return strconv.FormatUint(value, 10)
+}
+
+func prometheusFloat(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
 func (s *server) adminCity(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.market.Snapshot())
 }
@@ -213,6 +417,37 @@ func (s *server) adminSettlement(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) adminSettlementVerify(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.settlement.Verify())
+}
+
+func (s *server) adminPayoutsCSV(w http.ResponseWriter, _ *http.Request) {
+	displayNames := map[string]string{}
+	for _, provider := range s.market.Snapshot().Providers {
+		displayNames[provider.ID] = provider.DisplayName
+	}
+	settlementSnapshot := s.settlement.Snapshot(0)
+	balances := append([]settlement.Balance(nil), settlementSnapshot.ProviderBalances...)
+	sort.Slice(balances, func(i, j int) bool { return balances[i].AccountID < balances[j].AccountID })
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="mi-payouts.csv"`)
+	writer := csv.NewWriter(w)
+	if err := writer.Write([]string{"provider_id", "display_name", "events", "total_tokens", "avg_latency_ms", "reward_micros", "penalty_micros"}); err != nil {
+		return
+	}
+	for _, balance := range balances {
+		if err := writer.Write([]string{
+			balance.AccountID,
+			displayNames[balance.AccountID],
+			strconv.FormatInt(balance.Events, 10),
+			strconv.FormatInt(balance.TotalTokens, 10),
+			strconv.FormatInt(balance.AverageLatencyMs, 10),
+			strconv.FormatInt(balance.RewardMicros, 10),
+			strconv.FormatInt(balance.PenaltyMicros, 10),
+		}); err != nil {
+			return
+		}
+	}
+	writer.Flush()
 }
 
 func (s *server) adminReputation(w http.ResponseWriter, _ *http.Request) {
