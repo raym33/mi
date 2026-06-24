@@ -24,6 +24,7 @@ City mode currently supports:
 - Privacy tiers: `private`, `community`, and `public`.
 - HTTPS/WSS and node mTLS examples.
 - Admin JSON endpoints for nodes, city state, settlement, reputation, challenges, and integrity.
+- A minimal admin dashboard at `/admin/dashboard`.
 
 It does not yet include:
 
@@ -295,6 +296,14 @@ curl http://localhost:8080/v1/models/catalog \
 ```
 
 ## Inspect Operations
+
+Open the dashboard:
+
+```text
+http://localhost:8080/admin/dashboard
+```
+
+The dashboard asks for `admin_token`, then loads the protected admin JSON endpoints from the browser. It shows nodes, capacity, observed latency/TTFT/tokens per second, consumer usage, provider rewards, settlement integrity, reputation, and an adjustable cloud cost comparison.
 
 Public capacity:
 

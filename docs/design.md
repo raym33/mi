@@ -20,6 +20,7 @@ The working deployment target today is Apple Silicon Macs running Ollama. The pr
 Coordinator:
 
 - Serves `/v1/chat/completions`, `/v1/models`, `/v1/models/catalog`, `/v1/me`, `/network/status`, and admin endpoints.
+- Serves `/admin/dashboard` as a small built-in operator UI over the admin JSON endpoints.
 - Authenticates consumers and admin requests.
 - Accepts node WebSocket connections.
 - Normalizes OpenAI-style chat requests into internal inference requests.

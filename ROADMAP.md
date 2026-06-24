@@ -52,6 +52,7 @@ Settlement and integrity:
 - Per-provider challenge rotation.
 - Combined settlement and challenge integrity manifest.
 - External anchoring path through `/admin/integrity`.
+- Minimal built-in admin dashboard for operators.
 
 Security and privacy:
 
@@ -73,7 +74,7 @@ Heterogeneous groundwork:
 
 These are the highest-leverage product steps for a real pilot:
 
-- Admin dashboard for nodes, model availability, usage, quotas, reputation, settlement, challenges, and provider earnings.
+- Deeper admin dashboard workflows for enrollment, payout review, and challenge operations.
 - Prometheus metrics for requests, tokens, latency, TTFT, throughput, errors, cooldowns, and provider usage.
 - Uptime windows and p95 latency windows in scheduler scoring.
 - One-command provider enrollment links or QR codes.

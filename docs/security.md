@@ -29,6 +29,7 @@ Authentication:
 - Consumer API keys for `/v1/*` endpoints.
 - Provider tokens for node enrollment in city mode.
 - Admin bearer token for `/admin/*` endpoints.
+- The `/admin/dashboard` HTML shell is served without data; its browser requests still need the admin bearer token unless `dev_admin_open` is enabled.
 - Optional development escape hatch with `dev_admin_open: true`.
 
 Authorization and routing:

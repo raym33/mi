@@ -60,6 +60,7 @@ Settlement and reputation:
 - Coordinator-observed latency, TTFT, estimated tokens/sec, and failure rate feed scheduling cost.
 - Optional benchmark challenge chain and synthetic challenge runner.
 - `/admin/integrity` exports an anchor hash over settlement and challenge verification state.
+- `/admin/dashboard` serves a minimal operator dashboard for nodes, health, usage, rewards, cloud-savings estimates, integrity, and reputation.
 
 Security and privacy controls:
 
@@ -261,6 +262,14 @@ A provider configured as `public` can earn credits for public prompts, but it ca
 Important: privacy tiers are routing policy. A remote provider machine can still inspect prompts it receives. Sensitive work should use trusted nodes, mTLS, private networking, and operational controls until stronger confidential-compute designs exist.
 
 ## Admin Visibility
+
+Open the dashboard:
+
+```text
+http://localhost:8080/admin/dashboard
+```
+
+Enter `admin-dev-token` for the city example config.
 
 ```bash
 curl http://localhost:8080/network/status

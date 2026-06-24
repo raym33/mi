@@ -94,6 +94,8 @@ func main() {
 	mux.HandleFunc("GET /v1/models/catalog", s.requireConsumer(s.modelsCatalog))
 	mux.HandleFunc("POST /v1/chat/completions", s.requireConsumerQuota(s.chatCompletions))
 	mux.HandleFunc("GET /ws/node", s.nodeWebSocket)
+	mux.HandleFunc("GET /admin", s.adminDashboardRedirect)
+	mux.HandleFunc("GET /admin/dashboard", s.adminDashboard)
 	mux.HandleFunc("GET /admin/nodes", s.requireAdmin(s.adminNodes))
 	mux.HandleFunc("GET /admin/city", s.requireAdmin(s.adminCity))
 	mux.HandleFunc("GET /admin/settlement", s.requireAdmin(s.adminSettlement))

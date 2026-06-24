@@ -92,6 +92,43 @@ func TestAdminRequiresTokenUnlessDevOpen(t *testing.T) {
 	}
 }
 
+func TestAdminDashboardServesShellWithoutExposingData(t *testing.T) {
+	s := &server{adminToken: "admin-test"}
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard", nil)
+	rec := httptest.NewRecorder()
+
+	s.adminDashboard(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
+		t.Fatalf("content-type = %q, want html", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "mi admin dashboard") || !strings.Contains(body, "/admin/reputation") {
+		t.Fatalf("dashboard shell missing expected content")
+	}
+	if strings.Contains(body, "admin-test") {
+		t.Fatalf("dashboard shell should not expose configured admin token")
+	}
+}
+
+func TestAdminDashboardRedirect(t *testing.T) {
+	s := &server{}
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	rec := httptest.NewRecorder()
+
+	s.adminDashboardRedirect(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("redirect status = %d, want %d", rec.Code, http.StatusFound)
+	}
+	if got := rec.Header().Get("Location"); got != "/admin/dashboard" {
+		t.Fatalf("location = %q, want /admin/dashboard", got)
+	}
+}
+
 func TestNodeWebSocketRequiresClientCertificate(t *testing.T) {
 	market, err := city.New(config.CityConfig{}, nil)
 	if err != nil {
