@@ -1,0 +1,37 @@
+listen_addr: ":8088"
+admin_token: "demo-admin-token"
+city:
+  enabled: true
+  name: "mi Demo Cooperative"
+  require_provider_tokens: true
+  sqlite_path: "data/demo/mi-city.db"
+  consumers:
+    - id: "demo-consumer"
+      display_name: "Demo Consumer"
+      total_token_limit: 1000000
+      api_keys:
+        - "sk-mi-demo"
+  providers:
+    - id: "demo-provider"
+      display_name: "Demo Provider"
+      token: "pk-mi-demo"
+      privacy_mode: "private"
+settlement:
+  enabled: true
+  sqlite_path: "data/demo/mi-settlement.db"
+  price_per_thousand_tokens_micros: 200
+  provider_reward_share_bps: 7000
+  target_latency_ms: 5000
+  latency_penalty_bps: 1000
+idempotency:
+  sqlite_path: "data/demo/mi-idempotency.db"
+  ttl: "24h"
+challenges:
+  enabled: false
+models:
+  aliases:
+    - id: "demo-model"
+      target: "demo-model"
+      display_name: "Demo Echo Model"
+      description: "Deterministic echo backend for offline demos"
+      tags: ["demo"]

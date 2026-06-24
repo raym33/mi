@@ -22,6 +22,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/raym33/mi/internal/backend"
 	"github.com/raym33/mi/internal/config"
+	"github.com/raym33/mi/internal/echobackend"
 	"github.com/raym33/mi/internal/ollama"
 	"github.com/raym33/mi/internal/privacy"
 	"github.com/raym33/mi/internal/protocol"
@@ -221,6 +222,8 @@ func newInferenceBackend(cfg config.NodeAgent) (backend.Runtime, error) {
 	switch strings.ToLower(cfg.Backend.Type) {
 	case "", "ollama":
 		return ollama.New(cfg.Backend.URL), nil
+	case "echo", "mock":
+		return echobackend.New(), nil
 	default:
 		return nil, errors.New("unsupported backend type: " + cfg.Backend.Type)
 	}

@@ -131,6 +131,22 @@ ollama serve
 ollama pull llama3.1:8b
 ```
 
+## Offline Demo (no Ollama required)
+
+To see the whole loop working in one command — coordinator, a node-agent using
+the built-in dependency-free `echo` backend, an OpenAI-compatible chat
+completion, and the operator surface (Prometheus metrics, provider payout CSV,
+integrity anchor) all reflecting the settlement that just happened:
+
+```bash
+make demo
+```
+
+This needs only Go (no Ollama, no GPU). It boots everything on `:8088`, runs a
+real authenticated request through the real WebSocket transport, prints the
+streamed result and the resulting metrics/payout/integrity output, then shuts
+down cleanly. Use it as the quickest proof the control plane works end to end.
+
 ## Quickstart: One Coordinator, One Local Node
 
 Clone and build:

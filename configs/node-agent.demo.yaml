@@ -1,0 +1,19 @@
+node_id: "demo-node"
+provider_id: "demo-provider"
+provider_token: "pk-mi-demo"
+public_name: "Demo Echo Node"
+city: "Demo"
+privacy_mode: "private"
+coordinator_url: "ws://localhost:8088/ws/node"
+backend:
+  type: "echo"
+hardware:
+  kind: "demo"
+  vendor: "mi"
+  model: "echo"
+  power_mode: "always_on"
+  network_mode: "lan"
+models:
+  - "demo-model"
+heartbeat_interval: "5s"
+max_concurrent: 4
