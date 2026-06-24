@@ -337,6 +337,7 @@ The TLS city example also enables node mTLS for `/ws/node`.
 
 ## Documentation
 
+- [Production Deployment Runbook](docs/deployment.md): step-by-step instructions to run `mi` in production (coordinator + nodes, Tailscale/TLS, systemd/launchd, accounts, backups, monitoring).
 - [City Network Mode](docs/city-network.md): accounts, provider join flow, quotas, usage, privacy tiers, and admin operations.
 - [DePIN Settlement And Rewards](docs/depin-settlement.md): cooperative accounting, hash chains, rewards, reputation, challenges, and anchoring.
 - [Metrics](docs/metrics.md): Prometheus-style admin metrics for coordinator operations.

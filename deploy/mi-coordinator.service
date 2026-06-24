@@ -1,0 +1,31 @@
+[Unit]
+Description=mi coordinator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mi
+Group=mi
+WorkingDirectory=/opt/mi
+ExecStart=/opt/mi/bin/coordinator -config /etc/mi/coordinator.yaml
+Restart=on-failure
+RestartSec=2
+
+# The coordinator drains in-flight requests and flushes its ledgers on SIGTERM
+# (graceful shutdown, ~20s budget). Give systemd room before it force-kills.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Persistent state lives in /var/lib/mi (matches sqlite_path in the prod config).
+StateDirectory=mi
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/mi
+
+[Install]
+WantedBy=multi-user.target

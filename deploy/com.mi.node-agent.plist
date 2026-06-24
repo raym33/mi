@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS LaunchAgent for the mi node-agent (Apple Silicon node with Ollama).
+  Install at ~/Library/LaunchAgents/com.mi.node-agent.plist, then:
+    launchctl load -w ~/Library/LaunchAgents/com.mi.node-agent.plist
+  Requires Ollama running (it is launched as a normal user app / `ollama serve`).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mi.node-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/mi/bin/node-agent</string>
+        <string>-config</string>
+        <string>/usr/local/mi/node-agent.yaml</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>StandardOutPath</key>
+    <string>/usr/local/mi/logs/node-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/mi/logs/node-agent.err.log</string>
+</dict>
+</plist>

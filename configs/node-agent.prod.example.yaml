@@ -1,0 +1,41 @@
+# Production node-agent config (one per provider machine, e.g. each Mac).
+# Requires a real backend: Ollama running locally with the model pulled.
+# The "echo" backend is for demos only — do not use it in production.
+# See docs/deployment.md.
+
+node_id: "" # empty => uses the machine hostname
+provider_id: "REPLACE_PROVIDER_ID" # the id you created via POST /admin/providers
+provider_token: "REPLACE_PROVIDER_TOKEN" # one-time token returned by that call
+public_name: "Mac Studio 1"
+city: "Your Community"
+
+# 'private' nodes serve all tiers (trusted hardware); 'public' nodes serve only
+# public, non-sensitive work. Keep sensitive workloads on private nodes.
+privacy_mode: "private"
+
+# Tailnet address of the coordinator. Use wss:// if you terminate TLS publicly.
+coordinator_url: "ws://100.x.y.z:8080/ws/node"
+
+backend:
+  type: "ollama"
+  url: "http://127.0.0.1:11434"
+
+hardware:
+  kind: "mac"
+  vendor: "apple"
+  soc: "apple_silicon"
+  accelerators: ["metal"]
+  power_mode: "always_on"
+  network_mode: "lan"
+
+models:
+  - "llama3.1:8b" # must be pulled in Ollama on this machine
+
+heartbeat_interval: "5s"
+max_concurrent: 2 # tune to the machine; start low
+
+# Only if the coordinator uses public TLS + node mTLS (not needed over Tailscale):
+# tls:
+#   ca_file: "/etc/mi/tls/ca.crt"
+#   cert_file: "/etc/mi/tls/node.crt"
+#   key_file: "/etc/mi/tls/node.key"

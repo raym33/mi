@@ -1,0 +1,12 @@
+[Unit]
+Description=mi state backup
+
+[Service]
+Type=oneshot
+User=mi
+Group=mi
+WorkingDirectory=/opt/mi
+Environment=DATA_DIR=/var/lib/mi
+Environment=BACKUP_DIR=/var/backups/mi
+ExecStart=/bin/bash /opt/mi/scripts/backup-state.sh
+ReadWritePaths=/var/lib/mi /var/backups/mi
