@@ -932,7 +932,9 @@ func (s *server) adminDisableProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
+	if s.maxRequestBytes > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
+	}
 	var req openai.ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeDecodeError(w, err)
@@ -1046,7 +1048,9 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) embeddings(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
+	if s.maxRequestBytes > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
+	}
 	var req openai.EmbeddingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeDecodeError(w, err)
