@@ -29,6 +29,7 @@ import (
 	"github.com/raym33/mi/internal/challenge"
 	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/config"
+	"github.com/raym33/mi/internal/idempotency"
 	"github.com/raym33/mi/internal/modelcatalog"
 	"github.com/raym33/mi/internal/openai"
 	"github.com/raym33/mi/internal/privacy"
@@ -44,6 +45,7 @@ type server struct {
 	market                accountMarket
 	modelCatalog          catalogService
 	settlement            settlementLedger
+	idempotency           *idempotency.Store
 	challenges            challengeLedger
 	challengeMu           sync.Mutex
 	nextChallengeProvider int
@@ -79,11 +81,23 @@ func main() {
 		_ = market.Close()
 		log.Fatal(err)
 	}
+	idemStore, err := idempotency.New(cfg.Idempotency.SQLitePath, cfg.Idempotency.TTL.Duration)
+	if err != nil {
+		_ = settlementLedger.Close()
+		_ = market.Close()
+		log.Fatal(err)
+	}
+	closeState := func() {
+		_ = idemStore.Close()
+		_ = settlementLedger.Close()
+		_ = market.Close()
+	}
 	s := &server{
 		registry:              scheduler.NewRegistry(),
 		market:                market,
 		modelCatalog:          modelcatalog.New(cfg.Models),
 		settlement:            settlementLedger,
+		idempotency:           idemStore,
 		challenges:            challengeLedger,
 		adminToken:            cfg.AdminToken,
 		devAdminOpen:          cfg.DevAdminOpen,
@@ -118,11 +132,6 @@ func main() {
 	mux.HandleFunc("POST /admin/providers", s.requireAdmin(s.adminCreateProvider))
 	mux.HandleFunc("POST /admin/providers/{id}/rotate-token", s.requireAdmin(s.adminRotateProviderToken))
 	mux.HandleFunc("DELETE /admin/providers/{id}", s.requireAdmin(s.adminDisableProvider))
-
-	closeState := func() {
-		_ = settlementLedger.Close()
-		_ = market.Close()
-	}
 
 	srv, err := newHTTPServer(cfg, mux)
 	if err != nil {
@@ -631,6 +640,11 @@ func hashIntegrityAnchor(anchor integrityAnchor) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func idempotencyScopedKey(consumerID, key string) string {
+	sum := sha256.Sum256([]byte(consumerID + "\x00" + key))
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *server) adminRunChallenge(w http.ResponseWriter, r *http.Request) {
 	var cfg config.ChallengeConfig
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
@@ -930,8 +944,58 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		inferReq.Messages = append(inferReq.Messages, protocol.ProtocolMessage{Role: msg.Role, Content: msg.Content})
 	}
 	applyDefaultMaxTokens(&inferReq)
-	reservation, err := s.market.ReserveConsumerQuota(consumerID(r.Context()), estimateTokenBudget(req))
+
+	cid := consumerID(r.Context())
+	var activeIdemKey string
+	key := r.Header.Get("Idempotency-Key")
+	if key != "" && req.Stream {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{
+			"error": map[string]string{
+				"message": "idempotency keys require stream=false",
+				"type":    "invalid_request",
+			},
+		})
+		return
+	}
+	if s.idempotency.Enabled() && key != "" {
+		scoped := idempotencyScopedKey(cid, key)
+		rec, err := s.idempotency.Begin(scoped)
+		if err != nil {
+			log.Printf("idempotency begin: %v", err)
+			writeJSONStatus(w, http.StatusInternalServerError, map[string]any{
+				"error": map[string]string{
+					"message": "idempotency store error",
+					"type":    "internal_error",
+				},
+			})
+			return
+		}
+		if rec != nil && rec.Status == "completed" {
+			w.Header().Set("Content-Type", rec.ContentType)
+			w.Header().Set("X-Mi-Idempotent-Replay", "true")
+			w.WriteHeader(rec.StatusCode)
+			_, _ = w.Write(rec.Response)
+			return
+		}
+		if rec != nil && rec.Status == "in_progress" {
+			writeJSONStatus(w, http.StatusConflict, map[string]any{
+				"error": map[string]string{
+					"message": "a request with this Idempotency-Key is already in progress",
+					"type":    "idempotency_conflict",
+				},
+			})
+			return
+		}
+		activeIdemKey = scoped
+	}
+
+	reservation, err := s.market.ReserveConsumerQuota(cid, estimateTokenBudget(req))
 	if err != nil {
+		if activeIdemKey != "" {
+			if err := s.idempotency.Abort(activeIdemKey); err != nil {
+				log.Printf("idempotency abort: %v", err)
+			}
+		}
 		writeJSONStatus(w, http.StatusPaymentRequired, map[string]any{
 			"error": map[string]string{
 				"message": err.Error(),
@@ -942,10 +1006,10 @@ func (s *server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Stream {
-		s.streamChat(w, r, requestID, req.Model, inferReq, consumerID(r.Context()), reservation)
+		s.streamChat(w, r, requestID, req.Model, inferReq, cid, reservation)
 		return
 	}
-	s.blockingChat(w, r, requestID, req.Model, inferReq, consumerID(r.Context()), reservation)
+	s.blockingChat(w, r, requestID, req.Model, inferReq, cid, reservation, activeIdemKey)
 }
 
 func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string, reservation *city.QuotaReservation) {
@@ -1003,7 +1067,7 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	flusher.Flush()
 }
 
-func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string, reservation *city.QuotaReservation) {
+func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string, reservation *city.QuotaReservation, activeIdemKey string) {
 	var content string
 	sink := collectSink{onChunk: func(chunk string) { content += chunk }}
 	metered := &meteredSink{inner: sink}
@@ -1015,6 +1079,11 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 	setDispatchHeaders(w, result)
 	if err != nil {
 		s.market.ReleaseReservation(reservation)
+		if activeIdemKey != "" {
+			if err := s.idempotency.Abort(activeIdemKey); err != nil {
+				log.Printf("idempotency abort: %v", err)
+			}
+		}
 		status := http.StatusBadGateway
 		if errors.Is(err, scheduler.ErrNoNode) {
 			status = http.StatusServiceUnavailable
@@ -1039,7 +1108,7 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 	}); err != nil {
 		log.Printf("record settlement: %v", err)
 	}
-	writeJSON(w, openai.ChatCompletionResponse{
+	response := openai.ChatCompletionResponse{
 		ID:      requestID,
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
@@ -1054,7 +1123,23 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 			CompletionTokens: done.OutputTokens,
 			TotalTokens:      done.PromptTokens + done.OutputTokens,
 		},
-	})
+	}
+	body, err := json.Marshal(response)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	body = append(body, '\n')
+	if activeIdemKey != "" {
+		if err := s.idempotency.Complete(activeIdemKey, http.StatusOK, "application/json", body); err != nil {
+			log.Printf("idempotency complete: %v", err)
+			http.Error(w, "idempotency store error", http.StatusInternalServerError)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 func (s *server) writeStreamError(w http.ResponseWriter, flusher http.Flusher, err error) {

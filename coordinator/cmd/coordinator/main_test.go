@@ -17,6 +17,7 @@ import (
 	"github.com/raym33/mi/internal/challenge"
 	"github.com/raym33/mi/internal/city"
 	"github.com/raym33/mi/internal/config"
+	"github.com/raym33/mi/internal/idempotency"
 	"github.com/raym33/mi/internal/modelcatalog"
 	"github.com/raym33/mi/internal/openai"
 	"github.com/raym33/mi/internal/protocol"
@@ -483,6 +484,114 @@ func TestChatUsesCoordinatorMeasuredUsage(t *testing.T) {
 	settlementSnapshot := settlements.Snapshot(10)
 	if settlementSnapshot.Events != 1 || len(settlementSnapshot.RecentEvents) != 1 || settlementSnapshot.RecentEvents[0].TotalTokens != 4 {
 		t.Fatalf("settlement = %+v, want one event with total tokens 4", settlementSnapshot)
+	}
+}
+
+func TestChatIdempotencyReplaysWithoutSecondSettlement(t *testing.T) {
+	market, err := city.New(config.CityConfig{
+		Enabled: true,
+		Consumers: []config.ConsumerAccount{{
+			ID:              "studio",
+			TotalTokenLimit: 1000,
+			APIKeys:         []string{"sk-test"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	settlements, err := settlement.New(config.SettlementConfig{Enabled: true, PricePerThousandTokensMicros: 1000, ProviderRewardShareBPS: 7000})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	idemStore, err := idempotency.New(filepath.Join(t.TempDir(), "idempotency.db"), time.Hour)
+	if err != nil {
+		t.Fatalf("new idempotency store: %v", err)
+	}
+	defer idemStore.Close()
+
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"llama3.1:8b"}, PrivacyMode: "private"}, challengeNodeConn{content: "idempotent-ok"})
+	s := &server{registry: registry, market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), settlement: settlements, idempotency: idemStore}
+	handler := s.requireConsumerQuota(s.chatCompletions)
+	body := `{
+		"model": "llama3.1:8b",
+		"max_tokens": 8,
+		"messages": [{"role": "user", "content": "hello"}]
+	}`
+	doRequest := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(body))
+		req.Header.Set("Authorization", "Bearer sk-test")
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", "k1")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	first := doRequest()
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want 200: %s", first.Code, first.Body.String())
+	}
+	if first.Header().Get("X-Mi-Idempotent-Replay") != "" {
+		t.Fatalf("first response should not be marked as replay")
+	}
+	var response openai.ChatCompletionResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode first response: %v: %s", err, first.Body.String())
+	}
+	if response.Choices[0].Message.Content != "idempotent-ok" {
+		t.Fatalf("content = %q, want idempotent-ok", response.Choices[0].Message.Content)
+	}
+
+	second := doRequest()
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, want 200: %s", second.Code, second.Body.String())
+	}
+	if second.Header().Get("X-Mi-Idempotent-Replay") != "true" {
+		t.Fatalf("replay header = %q, want true", second.Header().Get("X-Mi-Idempotent-Replay"))
+	}
+	if !bytes.Equal(second.Body.Bytes(), first.Body.Bytes()) {
+		t.Fatalf("replay body differs\nfirst:  %s\nsecond: %s", first.Body.String(), second.Body.String())
+	}
+	if snapshot := settlements.Snapshot(10); snapshot.Events != 1 {
+		t.Fatalf("settlement events = %d, want 1", snapshot.Events)
+	}
+}
+
+func TestChatIdempotencyRejectsStreaming(t *testing.T) {
+	market, err := city.New(config.CityConfig{}, []string{"sk-test"})
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	settlements, err := settlement.New(config.SettlementConfig{})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	idemStore, err := idempotency.New(filepath.Join(t.TempDir(), "idempotency.db"), time.Hour)
+	if err != nil {
+		t.Fatalf("new idempotency store: %v", err)
+	}
+	defer idemStore.Close()
+
+	s := &server{registry: scheduler.NewRegistry(), market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), settlement: settlements, idempotency: idemStore}
+	handler := s.requireConsumerQuota(s.chatCompletions)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{
+		"model": "llama3.1:8b",
+		"stream": true,
+		"messages": [{"role": "user", "content": "hello"}]
+	}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "k1")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "idempotency keys require stream=false") {
+		t.Fatalf("body = %q, want clear idempotency message", rec.Body.String())
 	}
 }
 
