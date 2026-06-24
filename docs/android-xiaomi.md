@@ -55,7 +55,7 @@ hardware:
   network_mode: "wifi_only"
 ```
 
-The coordinator stores and exposes this metadata through node snapshots, network status, and reputation reports. Requests can already ask for `mi_backend`, `mi_device_kind`, `mi_soc`, and `mi_accelerators`, so early Android/Snapdragon experiments can be routed explicitly without changing the public OpenAI-compatible endpoint.
+The coordinator stores and exposes this metadata through node snapshots, network status, and reputation reports. Requests can already ask for `mi_backend`, `mi_device_kind`, `mi_soc`, and `mi_accelerators`, so early Android/Snapdragon experiments can be routed explicitly without changing the public OpenAI-compatible endpoint. Node WebSocket messages carry `version` and `protocol_version` fields so Android, Snapdragon, Apple Silicon, CUDA, Linux, and Windows agents can evolve without forcing every node to update at once.
 
 Example request for a future Xiaomi Snapdragon QNN node:
 

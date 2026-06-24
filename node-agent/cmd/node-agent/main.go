@@ -75,28 +75,30 @@ func (a *agent) run(ctx context.Context) error {
 
 	hostname, _ := os.Hostname()
 	register := protocol.Envelope{
-		Type: "register",
+		Version: protocol.Version,
+		Type:    "register",
 		Register: &protocol.Register{
-			NodeID:        a.cfg.NodeID,
-			ProviderID:    a.cfg.ProviderID,
-			ProviderToken: a.cfg.ProviderToken,
-			PublicName:    a.cfg.PublicName,
-			City:          a.cfg.City,
-			PrivacyMode:   a.cfg.PrivacyMode,
-			PrivacyTiers:  privacyTiers,
-			Hostname:      hostname,
-			Arch:          runtime.GOARCH,
-			OS:            runtime.GOOS,
-			Backend:       a.backend.Name(),
-			DeviceKind:    a.cfg.Hardware.Kind,
-			DeviceVendor:  a.cfg.Hardware.Vendor,
-			DeviceModel:   a.cfg.Hardware.Model,
-			SoC:           a.cfg.Hardware.SoC,
-			Accelerators:  a.cfg.Hardware.Accelerators,
-			PowerMode:     a.cfg.Hardware.PowerMode,
-			NetworkMode:   a.cfg.Hardware.NetworkMode,
-			Models:        a.cfg.Models,
-			MaxConcurrent: a.cfg.MaxConcurrent,
+			ProtocolVersion: protocol.Version,
+			NodeID:          a.cfg.NodeID,
+			ProviderID:      a.cfg.ProviderID,
+			ProviderToken:   a.cfg.ProviderToken,
+			PublicName:      a.cfg.PublicName,
+			City:            a.cfg.City,
+			PrivacyMode:     a.cfg.PrivacyMode,
+			PrivacyTiers:    privacyTiers,
+			Hostname:        hostname,
+			Arch:            runtime.GOARCH,
+			OS:              runtime.GOOS,
+			Backend:         a.backend.Name(),
+			DeviceKind:      a.cfg.Hardware.Kind,
+			DeviceVendor:    a.cfg.Hardware.Vendor,
+			DeviceModel:     a.cfg.Hardware.Model,
+			SoC:             a.cfg.Hardware.SoC,
+			Accelerators:    a.cfg.Hardware.Accelerators,
+			PowerMode:       a.cfg.Hardware.PowerMode,
+			NetworkMode:     a.cfg.Hardware.NetworkMode,
+			Models:          a.cfg.Models,
+			MaxConcurrent:   a.cfg.MaxConcurrent,
 		},
 	}
 	if err := wsutil.WriteJSON(ctx, conn, register); err != nil {
@@ -127,15 +129,17 @@ func (a *agent) heartbeatLoop(ctx context.Context, conn *safeConn) error {
 			return ctx.Err()
 		case <-ticker.C:
 			msg := protocol.Envelope{
-				Type: "heartbeat",
+				Version: protocol.Version,
+				Type:    "heartbeat",
 				Heartbeat: &protocol.Heartbeat{
-					NodeID:         a.cfg.NodeID,
-					Models:         a.cfg.Models,
-					ActiveRequests: int(a.active.Load()),
-					QueueDepth:     0,
-					MemoryFreeMB:   system.FreeMemoryMB(),
-					LoadAverage:    loadAverage(),
-					ObservedAt:     time.Now(),
+					ProtocolVersion: protocol.Version,
+					NodeID:          a.cfg.NodeID,
+					Models:          a.cfg.Models,
+					ActiveRequests:  int(a.active.Load()),
+					QueueDepth:      0,
+					MemoryFreeMB:    system.FreeMemoryMB(),
+					LoadAverage:     loadAverage(),
+					ObservedAt:      time.Now(),
 				},
 			}
 			if err := conn.writeJSON(ctx, msg); err != nil {
@@ -156,6 +160,7 @@ func (a *agent) readLoop(ctx context.Context, conn *safeConn) error {
 		}
 		if int(a.active.Load()) >= a.cfg.MaxConcurrent {
 			_ = conn.writeJSON(ctx, protocol.Envelope{
+				Version:   protocol.Version,
 				Type:      "error",
 				RequestID: msg.RequestID,
 				Error:     &protocol.InferError{Message: "node at capacity", Retryable: true},
@@ -172,6 +177,7 @@ func (a *agent) handleInference(ctx context.Context, conn *safeConn, requestID s
 
 	done, err := a.backend.Chat(ctx, req, func(content string) error {
 		return conn.writeJSON(ctx, protocol.Envelope{
+			Version:   protocol.Version,
 			Type:      "chunk",
 			RequestID: requestID,
 			Chunk:     &protocol.InferChunk{Content: content},
@@ -179,13 +185,14 @@ func (a *agent) handleInference(ctx context.Context, conn *safeConn, requestID s
 	})
 	if err != nil {
 		_ = conn.writeJSON(ctx, protocol.Envelope{
+			Version:   protocol.Version,
 			Type:      "error",
 			RequestID: requestID,
 			Error:     &protocol.InferError{Message: err.Error(), Retryable: retryable(err)},
 		})
 		return
 	}
-	_ = conn.writeJSON(ctx, protocol.Envelope{Type: "done", RequestID: requestID, Done: &done})
+	_ = conn.writeJSON(ctx, protocol.Envelope{Version: protocol.Version, Type: "done", RequestID: requestID, Done: &done})
 }
 
 func newInferenceBackend(cfg config.NodeAgent) (backend.Runtime, error) {

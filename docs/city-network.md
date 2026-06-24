@@ -7,9 +7,9 @@ It introduces four primitives:
 - Consumers: people or teams allowed to call the OpenAI-compatible API.
 - Providers: people contributing Mac compute.
 - Provider tokens: shared secrets that let a node join under a provider account.
-- Usage accounting: requests and tokens are counted for both the consumer and the provider.
+- Usage accounting: requests and coordinator-estimated tokens are counted for both the consumer and the provider.
 - Consumer quotas: each API key can belong to an account with a token limit.
-- Quota reservations: estimated request budget is reserved before dispatch, then reconciled with actual usage when the request finishes.
+- Quota reservations: estimated request budget is reserved before dispatch, then reconciled with coordinator-estimated usage when the request finishes.
 - Settlement chain: successful inference can create tamper-evident debit and reward events.
 - SLA penalties: settlement can reduce provider rewards when successful requests exceed a configured latency target.
 - Persistent local usage: usage survives coordinator restarts when `usage_store_path` is configured.
@@ -281,7 +281,7 @@ make city-smoke
 
 - A local AI cooperative where people contribute idle Macs.
 - Shared inference for small businesses without sending prompts to a cloud API.
-- Internal credits or payouts later, based on measured provider token contribution.
+- Internal credits or payouts later, based on coordinator-estimated provider token contribution.
 - Public rented capacity for non-sensitive work, with private work pinned to trusted nodes.
 - Tamper-evident settlement logs for later payouts, invoices, or on-chain anchoring.
 - Public endpoint on a city VPN, Tailscale network, or reverse proxy.

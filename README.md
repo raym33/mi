@@ -144,10 +144,10 @@ See [Renting Compute Privately](docs/rental-privacy.md).
 
 ## Settlement And Rewards
 
-City deployments can enable a tamper-evident settlement chain. It records request metadata, token usage, latency, dispatch attempts, consumer debits, provider rewards, optional SLA penalties, and linked hashes without storing prompt bodies.
+City deployments can enable a tamper-evident settlement chain. It records request metadata, coordinator-estimated token usage, latency, dispatch attempts, consumer debits, provider rewards, optional SLA penalties, and linked hashes without storing prompt bodies.
 
-Provider reputation combines node health, cooldowns, error streaks, completed settlement events, tokens served, accrued rewards, and benchmark challenge results.
-Benchmark challenge events can be recorded manually or by an optional synthetic runner in a separate hash-chain and feed provider reputation for anti-farming.
+Provider reputation combines node health, cooldowns, error streaks, completed settlement events, tokens served, accrued rewards, and benchmark challenge results. The scheduler uses that provider score as a routing signal, so weak evidence or failed challenges can push traffic toward healthier providers.
+Benchmark challenge events can be recorded manually or by an optional synthetic runner in a separate hash-chain and feed provider reputation. Synthetic challenge requests use normal chat-shaped request IDs so nodes cannot simply detect a `challenge-` prefix.
 
 See [DePIN Settlement And Rewards](docs/depin-settlement.md).
 
@@ -169,9 +169,9 @@ Important: privacy tiers enforce scheduling policy. They do not make prompts cry
 
 ## Project Status
 
-`mi` is an MVP for local-first distributed inference. It is useful for experimentation, LAN deployments, and early community networks. It is not yet a complete payment network, hosted SaaS, or cryptographically private compute marketplace.
+`mi` is an MVP for local-first distributed inference. It is useful for experimentation, LAN deployments, and early community networks. It is not yet a complete payment network, hosted SaaS, trustless DePIN, or cryptographically private compute marketplace.
 
-The next major work is pricing, observability, provider reputation, installer polish, MLX-native inference, and stronger private-compute options.
+The next major work is pricing, observability, reputation tuning, installer polish, MLX-native inference, and stronger private-compute options.
 
 See [Roadmap](ROADMAP.md).
 

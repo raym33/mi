@@ -96,6 +96,7 @@ For city mode, the intended stack is:
 - Provider tokens bind that node to a provider account and can be rotated or revoked.
 - Consumer API keys authorize OpenAI-compatible API access and enforce quotas.
 - Provider account privacy policies prevent private requests from being dispatched to public rented providers.
+- Usage accounting is based on coordinator-estimated prompt and completion tokens, not worker-reported token counts.
 - Settlement events are hash-chained so reward and debit records are tamper-evident.
 
 ## Settlement integrity
@@ -103,3 +104,5 @@ For city mode, the intended stack is:
 The local settlement chain detects changes to recorded events. It does not prevent the operator from deleting the entire file or choosing not to record a request. For real payouts, back up the chain and periodically publish the latest hash to an external system such as a public blockchain, timestamping service, or signed transparency log.
 
 Use `GET /admin/integrity` to export a combined settlement and benchmark challenge manifest. Its `anchor_hash` is the recommended value to publish externally because it binds both usage/reward accounting and provider challenge evidence.
+
+The current token accounting estimate reduces worker fraud but is not a cryptographic proof of inference. Real-money deployments should add model-specific tokenizers, signed receipts, dispute windows, and external anchoring.

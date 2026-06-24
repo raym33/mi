@@ -22,6 +22,8 @@
 6. The node streams chunks from its configured backend back to the coordinator.
 7. The coordinator emits OpenAI-style SSE chunks to the client.
 
+Node WebSocket envelopes include a `version` field, and register/heartbeat payloads include `protocol_version`. Missing versions are treated as v1 for backwards compatibility, so future Android, Snapdragon, CUDA, Linux, Windows, and Apple Silicon agents can be upgraded gradually.
+
 Requests can include optional hardware routing hints:
 
 ```json
@@ -50,9 +52,11 @@ Once the first chunk is emitted, the request is pinned to that node. If the node
 
 Nodes that fail before the first token enter a short cooldown. Repeated failures extend the cooldown up to a cap, and a successful request clears the node's error streak. This keeps an unstable Mac from being chosen first over and over while still letting it recover automatically.
 
+Provider reputation is also part of routing. The coordinator builds an explainable score from healthy nodes, cooldowns, error streaks, settlement history, SLA penalties, and challenge summaries, then passes per-provider scores to the scheduler. Lower scores add routing cost, so challenge failures and poor operating history affect future traffic instead of living only in the admin dashboard.
+
 Privacy tiers are enforced before scheduling. A node announces what it accepts, but the coordinator intersects that claim with the provider account policy before registration. A provider account marked `public` can serve `public` requests, but it is never selected for `private` or `community` requests. If no eligible node exists, the coordinator returns no-node availability instead of silently lowering privacy.
 
-For quota-limited consumers, the coordinator reserves an estimated token budget before dispatch and releases or reconciles it when the request fails or completes. This prevents concurrent requests from spending the same remaining quota.
+For quota-limited consumers, the coordinator reserves an estimated token budget before dispatch and releases or reconciles it when the request fails or completes. Usage accounting is based on coordinator-estimated prompt and completion tokens, not node-reported counts. This prevents concurrent requests from spending the same remaining quota and avoids the simplest provider-side token inflation attack.
 
 Responses include dispatch metadata:
 
@@ -63,6 +67,7 @@ Responses include dispatch metadata:
 - `X-Mi-Backend`
 - `X-Mi-Device-Kind`
 - `X-Mi-Accelerators`
+- `X-Mi-Usage-Source`
 
 For streaming responses, those values are sent as HTTP trailers.
 

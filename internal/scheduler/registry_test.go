@@ -50,15 +50,16 @@ func TestRemoveProviderDisconnectsOnlyThatProvider(t *testing.T) {
 func TestRegisterExposesBackendAndHardwareMetadata(t *testing.T) {
 	registry := NewRegistry()
 	registry.Register(protocol.Register{
-		NodeID:       "xiaomi-node",
-		ProviderID:   "provider-a",
-		Backend:      "ort-qnn",
-		DeviceKind:   "android",
-		DeviceVendor: "xiaomi",
-		DeviceModel:  "xiaomi_15_ultra",
-		SoC:          "snapdragon_8_elite",
-		Accelerators: []string{"adreno", "hexagon_npu"},
-		Models:       []string{"llama3.2-3b-qnn"},
+		ProtocolVersion: protocol.Version,
+		NodeID:          "xiaomi-node",
+		ProviderID:      "provider-a",
+		Backend:         "ort-qnn",
+		DeviceKind:      "android",
+		DeviceVendor:    "xiaomi",
+		DeviceModel:     "xiaomi_15_ultra",
+		SoC:             "snapdragon_8_elite",
+		Accelerators:    []string{"adreno", "hexagon_npu"},
+		Models:          []string{"llama3.2-3b-qnn"},
 	}, &fakeConn{})
 
 	nodes := registry.Snapshot()
@@ -68,6 +69,9 @@ func TestRegisterExposesBackendAndHardwareMetadata(t *testing.T) {
 	node := nodes[0]
 	if node.Backend != "ort-qnn" || node.DeviceKind != "android" || node.DeviceVendor != "xiaomi" || node.SoC != "snapdragon_8_elite" {
 		t.Fatalf("node metadata = %+v, want android/xiaomi/qnn", node)
+	}
+	if node.ProtocolVersion != protocol.Version {
+		t.Fatalf("protocol version = %d, want %d", node.ProtocolVersion, protocol.Version)
 	}
 	if len(node.Accelerators) != 2 || node.Accelerators[0] != "adreno" || node.Accelerators[1] != "hexagon_npu" {
 		t.Fatalf("accelerators = %+v, want sorted accelerator list", node.Accelerators)
@@ -157,6 +161,32 @@ func TestDispatchFiltersBackendAndAccelerators(t *testing.T) {
 	}
 	if result.NodeID != "cuda-node" || result.Backend != "vllm" || sink.content != "cuda" || metal.calls != 0 {
 		t.Fatalf("result = %+v content=%q metal calls=%d, want cuda node only", result, sink.content, metal.calls)
+	}
+}
+
+func TestProviderScoresInfluenceDispatch(t *testing.T) {
+	registry := NewRegistry()
+	shaky := &scriptedConn{chunk: "shaky", done: protocol.InferDone{FinishReason: "stop"}}
+	trusted := &scriptedConn{chunk: "trusted", done: protocol.InferDone{FinishReason: "stop"}}
+	registry.Register(protocol.Register{NodeID: "node-shaky", ProviderID: "provider-shaky", Models: []string{"m"}}, shaky)
+	registry.Register(protocol.Register{NodeID: "node-trusted", ProviderID: "provider-trusted", Models: []string{"m"}}, trusted)
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-shaky", Models: []string{"m"}, LoadAverage: 0})
+	registry.Heartbeat(protocol.Heartbeat{NodeID: "node-trusted", Models: []string{"m"}, LoadAverage: 10})
+	registry.SetProviderScores(map[string]int{
+		"provider-shaky":   0,
+		"provider-trusted": 100,
+	})
+
+	sink := &collectTestSink{}
+	result, err := registry.Dispatch(context.Background(), "req", protocol.InferRequest{Model: "m"}, sink)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if result.NodeID != "node-trusted" || sink.content != "trusted" {
+		t.Fatalf("result = %+v content=%q, want higher-reputation provider despite higher load", result, sink.content)
+	}
+	if shaky.calls != 0 || trusted.calls != 1 {
+		t.Fatalf("calls shaky=%d trusted=%d, want only trusted", shaky.calls, trusted.calls)
 	}
 }
 

@@ -204,7 +204,47 @@ func (s *server) adminSettlementVerify(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) adminReputation(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, reputation.Build(s.market.Snapshot(), s.registry.Snapshot(), s.settlement.Snapshot(0), s.challenges.Snapshot(0)))
+	report := s.reputationReport()
+	s.applyProviderScores(report)
+	writeJSON(w, report)
+}
+
+func (s *server) refreshSchedulerReputation() {
+	if s.registry == nil || s.market == nil {
+		return
+	}
+	s.applyProviderScores(s.reputationReport())
+}
+
+func (s *server) reputationReport() reputation.Report {
+	var citySnapshot city.Snapshot
+	if s.market != nil {
+		citySnapshot = s.market.Snapshot()
+	}
+	var settlementSnapshot settlement.Snapshot
+	if s.settlement != nil {
+		settlementSnapshot = s.settlement.Snapshot(0)
+	}
+	var challengeSnapshot challenge.Snapshot
+	if s.challenges != nil {
+		challengeSnapshot = s.challenges.Snapshot(0)
+	}
+	var nodes []scheduler.NodeView
+	if s.registry != nil {
+		nodes = s.registry.Snapshot()
+	}
+	return reputation.Build(citySnapshot, nodes, settlementSnapshot, challengeSnapshot)
+}
+
+func (s *server) applyProviderScores(report reputation.Report) {
+	if s.registry == nil {
+		return
+	}
+	scores := map[string]int{}
+	for _, provider := range report.Providers {
+		scores[provider.ProviderID] = provider.Score
+	}
+	s.registry.SetProviderScores(scores)
 }
 
 func (s *server) adminIntegrity(w http.ResponseWriter, _ *http.Request) {
@@ -355,6 +395,7 @@ func (s *server) startChallengeRunner(cfg config.ChallengeConfig) {
 }
 
 func (s *server) runSyntheticChallenge(ctx context.Context, cfg config.ChallengeConfig) (challenge.Event, error) {
+	s.refreshSchedulerReputation()
 	model := cfg.Model
 	if model == "" {
 		models := s.registry.Models()
@@ -399,10 +440,11 @@ func (s *server) runSyntheticChallenge(ctx context.Context, cfg config.Challenge
 	}
 	var result scheduler.DispatchResult
 	var err error
+	requestID := "chatcmpl-" + randomID()
 	if providerID != "" {
-		result, err = s.registry.DispatchToProvider(ctx, "challenge-"+randomID(), providerID, inferReq, sink)
+		result, err = s.registry.DispatchToProvider(ctx, requestID, providerID, inferReq, sink)
 	} else {
-		result, err = s.registry.Dispatch(ctx, "challenge-"+randomID(), inferReq, sink)
+		result, err = s.registry.Dispatch(ctx, requestID, inferReq, sink)
 	}
 	latency := time.Since(startedAt)
 	if err != nil {
@@ -614,11 +656,14 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Mi-Privacy-Tier", req.PrivacyTier)
+	w.Header().Set("X-Mi-Usage-Source", "coordinator_estimate")
 	declareDispatchTrailers(w)
 
 	sink := sseSink{w: w, flusher: flusher, requestID: requestID, model: responseModel}
+	metered := &meteredSink{inner: &sink}
+	s.refreshSchedulerReputation()
 	startedAt := time.Now()
-	result, err := s.registry.Dispatch(r.Context(), requestID, req, &sink)
+	result, err := s.registry.Dispatch(r.Context(), requestID, req, metered)
 	latency := time.Since(startedAt)
 	setDispatchTrailers(w, result)
 	if err != nil {
@@ -626,7 +671,7 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 		s.writeStreamError(w, flusher, err)
 		return
 	}
-	done := result.Done
+	done := coordinatorMeasuredDone(req, result.Done, metered.OutputChars())
 	if err := s.market.RecordReserved(reservation, consumerID, result.ProviderID, done); err != nil {
 		log.Printf("record usage: %v", err)
 	}
@@ -659,9 +704,12 @@ func (s *server) streamChat(w http.ResponseWriter, r *http.Request, requestID st
 func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID string, responseModel string, req protocol.InferRequest, consumerID string, reservation *city.QuotaReservation) {
 	var content string
 	sink := collectSink{onChunk: func(chunk string) { content += chunk }}
+	metered := &meteredSink{inner: sink}
 	w.Header().Set("X-Mi-Privacy-Tier", req.PrivacyTier)
+	w.Header().Set("X-Mi-Usage-Source", "coordinator_estimate")
+	s.refreshSchedulerReputation()
 	startedAt := time.Now()
-	result, err := s.registry.Dispatch(r.Context(), requestID, req, sink)
+	result, err := s.registry.Dispatch(r.Context(), requestID, req, metered)
 	latency := time.Since(startedAt)
 	setDispatchHeaders(w, result)
 	if err != nil {
@@ -673,7 +721,7 @@ func (s *server) blockingChat(w http.ResponseWriter, r *http.Request, requestID 
 		http.Error(w, err.Error(), status)
 		return
 	}
-	done := result.Done
+	done := coordinatorMeasuredDone(req, result.Done, metered.OutputChars())
 	if err := s.market.RecordReserved(reservation, consumerID, result.ProviderID, done); err != nil {
 		log.Printf("record usage: %v", err)
 	}
@@ -791,7 +839,7 @@ func (n *nodeConn) SendInference(ctx context.Context, requestID string, req prot
 		n.mu.Unlock()
 	}()
 
-	if err := n.write(ctx, protocol.Envelope{Type: "infer", RequestID: requestID, Infer: &req}); err != nil {
+	if err := n.write(ctx, protocol.Envelope{Version: protocol.Version, Type: "infer", RequestID: requestID, Infer: &req}); err != nil {
 		return protocol.InferDone{}, err
 	}
 	for {
@@ -841,6 +889,7 @@ func (n *nodeConn) Close() error {
 	n.mu.Lock()
 	for requestID, ch := range n.pending {
 		ch <- protocol.Envelope{
+			Version:   protocol.Version,
 			Type:      "error",
 			RequestID: requestID,
 			Error:     &protocol.InferError{Message: "node disconnected", Retryable: true},
@@ -883,6 +932,20 @@ type collectSink struct {
 func (s collectSink) Chunk(content string) error {
 	s.onChunk(content)
 	return nil
+}
+
+type meteredSink struct {
+	inner       scheduler.StreamSink
+	outputChars int
+}
+
+func (s *meteredSink) Chunk(content string) error {
+	s.outputChars += len(content)
+	return s.inner.Chunk(content)
+}
+
+func (s *meteredSink) OutputChars() int {
+	return s.outputChars
 }
 
 type nodeInferenceError struct {
@@ -974,12 +1037,39 @@ func requestAccelerators(r *http.Request, req openai.ChatCompletionRequest) []st
 	return out
 }
 
+func coordinatorMeasuredDone(req protocol.InferRequest, reported protocol.InferDone, outputChars int) protocol.InferDone {
+	finish := reported.FinishReason
+	if finish == "" {
+		finish = "stop"
+	}
+	return protocol.InferDone{
+		FinishReason: finish,
+		PromptTokens: estimateProtocolPromptTokens(req),
+		OutputTokens: estimateTokensFromChars(outputChars),
+	}
+}
+
+func estimateProtocolPromptTokens(req protocol.InferRequest) int {
+	chars := 0
+	for _, msg := range req.Messages {
+		chars += len(msg.Role) + len(msg.Content)
+	}
+	return estimateTokensFromChars(chars)
+}
+
+func estimateTokensFromChars(chars int) int {
+	if chars <= 0 {
+		return 0
+	}
+	return (chars + 3) / 4
+}
+
 func estimateTokenBudget(req openai.ChatCompletionRequest) int64 {
 	chars := 0
 	for _, msg := range req.Messages {
 		chars += len(msg.Role) + len(msg.Content)
 	}
-	promptEstimate := int64((chars + 3) / 4)
+	promptEstimate := int64(estimateTokensFromChars(chars))
 	outputEstimate := int64(defaultReservedOutputTokens)
 	if req.MaxTokens != nil && *req.MaxTokens > 0 {
 		outputEstimate = int64(*req.MaxTokens)

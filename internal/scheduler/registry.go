@@ -30,67 +30,71 @@ type StreamSink interface {
 }
 
 type Registry struct {
-	mu    sync.Mutex
-	nodes map[string]*Node
+	mu             sync.Mutex
+	nodes          map[string]*Node
+	providerScores map[string]int
 }
 
 type Node struct {
-	ID            string
-	ProviderID    string
-	PublicName    string
-	City          string
-	PrivacyMode   string
-	PrivacyTiers  map[string]bool
-	Hostname      string
-	Backend       string
-	DeviceKind    string
-	DeviceVendor  string
-	DeviceModel   string
-	SoC           string
-	Accelerators  map[string]bool
-	PowerMode     string
-	NetworkMode   string
-	Models        map[string]bool
-	MaxConcurrent int
-	Active        int
-	QueueDepth    int
-	MemoryFreeMB  uint64
-	LoadAverage   float64
-	LastSeen      time.Time
-	ErrorStreak   int
-	CooldownUntil time.Time
-	LastError     string
-	Conn          NodeConn
+	ID              string
+	ProviderID      string
+	ProtocolVersion int
+	PublicName      string
+	City            string
+	PrivacyMode     string
+	PrivacyTiers    map[string]bool
+	Hostname        string
+	Backend         string
+	DeviceKind      string
+	DeviceVendor    string
+	DeviceModel     string
+	SoC             string
+	Accelerators    map[string]bool
+	PowerMode       string
+	NetworkMode     string
+	Models          map[string]bool
+	MaxConcurrent   int
+	Active          int
+	QueueDepth      int
+	MemoryFreeMB    uint64
+	LoadAverage     float64
+	LastSeen        time.Time
+	ErrorStreak     int
+	CooldownUntil   time.Time
+	LastError       string
+	Conn            NodeConn
 }
 
 type NodeView struct {
-	ID            string    `json:"id"`
-	ProviderID    string    `json:"provider_id,omitempty"`
-	PublicName    string    `json:"public_name,omitempty"`
-	City          string    `json:"city,omitempty"`
-	PrivacyMode   string    `json:"privacy_mode,omitempty"`
-	PrivacyTiers  []string  `json:"privacy_tiers,omitempty"`
-	Hostname      string    `json:"hostname"`
-	Backend       string    `json:"backend,omitempty"`
-	DeviceKind    string    `json:"device_kind,omitempty"`
-	DeviceVendor  string    `json:"device_vendor,omitempty"`
-	DeviceModel   string    `json:"device_model,omitempty"`
-	SoC           string    `json:"soc,omitempty"`
-	Accelerators  []string  `json:"accelerators,omitempty"`
-	PowerMode     string    `json:"power_mode,omitempty"`
-	NetworkMode   string    `json:"network_mode,omitempty"`
-	Models        []string  `json:"models"`
-	MaxConcurrent int       `json:"max_concurrent"`
-	Active        int       `json:"active"`
-	QueueDepth    int       `json:"queue_depth"`
-	MemoryFreeMB  uint64    `json:"memory_free_mb"`
-	LoadAverage   float64   `json:"load_average"`
-	LastSeen      time.Time `json:"last_seen"`
-	Healthy       bool      `json:"healthy"`
-	ErrorStreak   int       `json:"error_streak,omitempty"`
-	CooldownUntil time.Time `json:"cooldown_until,omitempty"`
-	LastError     string    `json:"last_error,omitempty"`
-	InCooldown    bool      `json:"in_cooldown"`
+	ID              string    `json:"id"`
+	ProviderID      string    `json:"provider_id,omitempty"`
+	ProtocolVersion int       `json:"protocol_version,omitempty"`
+	PublicName      string    `json:"public_name,omitempty"`
+	City            string    `json:"city,omitempty"`
+	PrivacyMode     string    `json:"privacy_mode,omitempty"`
+	PrivacyTiers    []string  `json:"privacy_tiers,omitempty"`
+	Hostname        string    `json:"hostname"`
+	Backend         string    `json:"backend,omitempty"`
+	DeviceKind      string    `json:"device_kind,omitempty"`
+	DeviceVendor    string    `json:"device_vendor,omitempty"`
+	DeviceModel     string    `json:"device_model,omitempty"`
+	SoC             string    `json:"soc,omitempty"`
+	Accelerators    []string  `json:"accelerators,omitempty"`
+	PowerMode       string    `json:"power_mode,omitempty"`
+	NetworkMode     string    `json:"network_mode,omitempty"`
+	Models          []string  `json:"models"`
+	MaxConcurrent   int       `json:"max_concurrent"`
+	Active          int       `json:"active"`
+	QueueDepth      int       `json:"queue_depth"`
+	MemoryFreeMB    uint64    `json:"memory_free_mb"`
+	LoadAverage     float64   `json:"load_average"`
+	LastSeen        time.Time `json:"last_seen"`
+	Healthy         bool      `json:"healthy"`
+	ErrorStreak     int       `json:"error_streak,omitempty"`
+	CooldownUntil   time.Time `json:"cooldown_until,omitempty"`
+	LastError       string    `json:"last_error,omitempty"`
+	InCooldown      bool      `json:"in_cooldown"`
+	ProviderScore   int       `json:"provider_score,omitempty"`
 }
 
 type NetworkStatus struct {
@@ -126,7 +130,16 @@ type RetryableError interface {
 }
 
 func NewRegistry() *Registry {
-	return &Registry{nodes: map[string]*Node{}}
+	return &Registry{nodes: map[string]*Node{}, providerScores: map[string]int{}}
+}
+
+func (r *Registry) SetProviderScores(scores map[string]int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.providerScores = map[string]int{}
+	for providerID, score := range scores {
+		r.providerScores[providerID] = clampProviderScore(score)
+	}
 }
 
 func (r *Registry) Register(msg protocol.Register, conn NodeConn) {
@@ -158,25 +171,26 @@ func (r *Registry) Register(msg protocol.Register, conn NodeConn) {
 		}
 	}
 	r.nodes[msg.NodeID] = &Node{
-		ID:            msg.NodeID,
-		ProviderID:    msg.ProviderID,
-		PublicName:    msg.PublicName,
-		City:          msg.City,
-		PrivacyMode:   msg.PrivacyMode,
-		PrivacyTiers:  acceptedPrivacy,
-		Hostname:      msg.Hostname,
-		Backend:       msg.Backend,
-		DeviceKind:    msg.DeviceKind,
-		DeviceVendor:  msg.DeviceVendor,
-		DeviceModel:   msg.DeviceModel,
-		SoC:           msg.SoC,
-		Accelerators:  accelerators,
-		PowerMode:     msg.PowerMode,
-		NetworkMode:   msg.NetworkMode,
-		Models:        models,
-		MaxConcurrent: max(1, msg.MaxConcurrent),
-		LastSeen:      time.Now(),
-		Conn:          conn,
+		ID:              msg.NodeID,
+		ProviderID:      msg.ProviderID,
+		ProtocolVersion: normalizeProtocolVersion(msg.ProtocolVersion),
+		PublicName:      msg.PublicName,
+		City:            msg.City,
+		PrivacyMode:     msg.PrivacyMode,
+		PrivacyTiers:    acceptedPrivacy,
+		Hostname:        msg.Hostname,
+		Backend:         msg.Backend,
+		DeviceKind:      msg.DeviceKind,
+		DeviceVendor:    msg.DeviceVendor,
+		DeviceModel:     msg.DeviceModel,
+		SoC:             msg.SoC,
+		Accelerators:    accelerators,
+		PowerMode:       msg.PowerMode,
+		NetworkMode:     msg.NetworkMode,
+		Models:          models,
+		MaxConcurrent:   max(1, msg.MaxConcurrent),
+		LastSeen:        time.Now(),
+		Conn:            conn,
 	}
 }
 
@@ -193,6 +207,9 @@ func (r *Registry) Heartbeat(msg protocol.Heartbeat) {
 		models[model] = true
 	}
 	node.Models = models
+	if msg.ProtocolVersion > 0 {
+		node.ProtocolVersion = normalizeProtocolVersion(msg.ProtocolVersion)
+	}
 	node.Active = msg.ActiveRequests
 	node.QueueDepth = msg.QueueDepth
 	node.MemoryFreeMB = msg.MemoryFreeMB
@@ -267,33 +284,35 @@ func (r *Registry) Snapshot() []NodeView {
 		}
 		sort.Strings(accelerators)
 		out = append(out, NodeView{
-			ID:            node.ID,
-			ProviderID:    node.ProviderID,
-			PublicName:    node.PublicName,
-			City:          node.City,
-			PrivacyMode:   node.PrivacyMode,
-			PrivacyTiers:  privacyTiers,
-			Hostname:      node.Hostname,
-			Backend:       node.Backend,
-			DeviceKind:    node.DeviceKind,
-			DeviceVendor:  node.DeviceVendor,
-			DeviceModel:   node.DeviceModel,
-			SoC:           node.SoC,
-			Accelerators:  accelerators,
-			PowerMode:     node.PowerMode,
-			NetworkMode:   node.NetworkMode,
-			Models:        models,
-			MaxConcurrent: node.MaxConcurrent,
-			Active:        node.Active,
-			QueueDepth:    node.QueueDepth,
-			MemoryFreeMB:  node.MemoryFreeMB,
-			LoadAverage:   node.LoadAverage,
-			LastSeen:      node.LastSeen,
-			Healthy:       node.healthy(),
-			ErrorStreak:   node.ErrorStreak,
-			CooldownUntil: node.CooldownUntil,
-			LastError:     node.LastError,
-			InCooldown:    node.inCooldown(time.Now()),
+			ID:              node.ID,
+			ProviderID:      node.ProviderID,
+			ProtocolVersion: node.ProtocolVersion,
+			PublicName:      node.PublicName,
+			City:            node.City,
+			PrivacyMode:     node.PrivacyMode,
+			PrivacyTiers:    privacyTiers,
+			Hostname:        node.Hostname,
+			Backend:         node.Backend,
+			DeviceKind:      node.DeviceKind,
+			DeviceVendor:    node.DeviceVendor,
+			DeviceModel:     node.DeviceModel,
+			SoC:             node.SoC,
+			Accelerators:    accelerators,
+			PowerMode:       node.PowerMode,
+			NetworkMode:     node.NetworkMode,
+			Models:          models,
+			MaxConcurrent:   node.MaxConcurrent,
+			Active:          node.Active,
+			QueueDepth:      node.QueueDepth,
+			MemoryFreeMB:    node.MemoryFreeMB,
+			LoadAverage:     node.LoadAverage,
+			LastSeen:        node.LastSeen,
+			Healthy:         node.healthy(),
+			ErrorStreak:     node.ErrorStreak,
+			CooldownUntil:   node.CooldownUntil,
+			LastError:       node.LastError,
+			InCooldown:      node.inCooldown(time.Now()),
+			ProviderScore:   r.providerScoreLocked(node.ProviderID),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -443,7 +462,7 @@ func (r *Registry) reserveFiltered(req protocol.InferRequest, exclude map[string
 		return nil, ErrNoNode
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		return cost(candidates[i]) < cost(candidates[j])
+		return r.nodeCostLocked(candidates[i]) < r.nodeCostLocked(candidates[j])
 	})
 	selected := candidates[0]
 	selected.Active++
@@ -550,8 +569,44 @@ func (n *Node) acceptsPrivacy(tier string) bool {
 	return n.PrivacyTiers[tier]
 }
 
-func cost(n *Node) float64 {
-	return float64(n.Active*10+n.QueueDepth*5) + n.LoadAverage
+func (r *Registry) nodeCostLocked(n *Node) float64 {
+	utilization := 0.0
+	if n.MaxConcurrent > 0 {
+		utilization = float64(n.Active) / float64(n.MaxConcurrent)
+	}
+	queuePenalty := float64(n.QueueDepth) * 5
+	loadPenalty := n.LoadAverage
+	errorPenalty := float64(n.ErrorStreak) * 8
+	reputationPenalty := float64(100-r.providerScoreLocked(n.ProviderID)) / 5
+	return utilization*20 + queuePenalty + loadPenalty + errorPenalty + reputationPenalty
+}
+
+func (r *Registry) providerScoreLocked(providerID string) int {
+	if providerID == "" {
+		return 70
+	}
+	score, ok := r.providerScores[providerID]
+	if !ok {
+		return 70
+	}
+	return clampProviderScore(score)
+}
+
+func clampProviderScore(score int) int {
+	if score < 0 {
+		return 0
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
+}
+
+func normalizeProtocolVersion(version int) int {
+	if version <= 0 {
+		return protocol.Version
+	}
+	return version
 }
 
 type firstChunkTracker struct {

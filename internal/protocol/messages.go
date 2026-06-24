@@ -2,7 +2,10 @@ package protocol
 
 import "time"
 
+const Version = 1
+
 type Envelope struct {
+	Version   int           `json:"version,omitempty"`
 	Type      string        `json:"type"`
 	RequestID string        `json:"request_id,omitempty"`
 	Register  *Register     `json:"register,omitempty"`
@@ -14,36 +17,38 @@ type Envelope struct {
 }
 
 type Register struct {
-	NodeID        string   `json:"node_id"`
-	ProviderID    string   `json:"provider_id,omitempty"`
-	ProviderToken string   `json:"provider_token,omitempty"`
-	PublicName    string   `json:"public_name,omitempty"`
-	City          string   `json:"city,omitempty"`
-	PrivacyMode   string   `json:"privacy_mode,omitempty"`
-	PrivacyTiers  []string `json:"privacy_tiers,omitempty"`
-	Hostname      string   `json:"hostname"`
-	Arch          string   `json:"arch"`
-	OS            string   `json:"os"`
-	Backend       string   `json:"backend,omitempty"`
-	DeviceKind    string   `json:"device_kind,omitempty"`
-	DeviceVendor  string   `json:"device_vendor,omitempty"`
-	DeviceModel   string   `json:"device_model,omitempty"`
-	SoC           string   `json:"soc,omitempty"`
-	Accelerators  []string `json:"accelerators,omitempty"`
-	PowerMode     string   `json:"power_mode,omitempty"`
-	NetworkMode   string   `json:"network_mode,omitempty"`
-	Models        []string `json:"models"`
-	MaxConcurrent int      `json:"max_concurrent"`
+	ProtocolVersion int      `json:"protocol_version,omitempty"`
+	NodeID          string   `json:"node_id"`
+	ProviderID      string   `json:"provider_id,omitempty"`
+	ProviderToken   string   `json:"provider_token,omitempty"`
+	PublicName      string   `json:"public_name,omitempty"`
+	City            string   `json:"city,omitempty"`
+	PrivacyMode     string   `json:"privacy_mode,omitempty"`
+	PrivacyTiers    []string `json:"privacy_tiers,omitempty"`
+	Hostname        string   `json:"hostname"`
+	Arch            string   `json:"arch"`
+	OS              string   `json:"os"`
+	Backend         string   `json:"backend,omitempty"`
+	DeviceKind      string   `json:"device_kind,omitempty"`
+	DeviceVendor    string   `json:"device_vendor,omitempty"`
+	DeviceModel     string   `json:"device_model,omitempty"`
+	SoC             string   `json:"soc,omitempty"`
+	Accelerators    []string `json:"accelerators,omitempty"`
+	PowerMode       string   `json:"power_mode,omitempty"`
+	NetworkMode     string   `json:"network_mode,omitempty"`
+	Models          []string `json:"models"`
+	MaxConcurrent   int      `json:"max_concurrent"`
 }
 
 type Heartbeat struct {
-	NodeID         string    `json:"node_id"`
-	Models         []string  `json:"models"`
-	ActiveRequests int       `json:"active_requests"`
-	QueueDepth     int       `json:"queue_depth"`
-	MemoryFreeMB   uint64    `json:"memory_free_mb"`
-	LoadAverage    float64   `json:"load_average"`
-	ObservedAt     time.Time `json:"observed_at"`
+	ProtocolVersion int       `json:"protocol_version,omitempty"`
+	NodeID          string    `json:"node_id"`
+	Models          []string  `json:"models"`
+	ActiveRequests  int       `json:"active_requests"`
+	QueueDepth      int       `json:"queue_depth"`
+	MemoryFreeMB    uint64    `json:"memory_free_mb"`
+	LoadAverage     float64   `json:"load_average"`
+	ObservedAt      time.Time `json:"observed_at"`
 }
 
 type InferRequest struct {
@@ -72,6 +77,8 @@ type InferDone struct {
 	FinishReason string `json:"finish_reason"`
 	PromptTokens int    `json:"prompt_tokens"`
 	OutputTokens int    `json:"output_tokens"`
+	KeyID        string `json:"key_id,omitempty"`
+	Signature    string `json:"signature,omitempty"`
 }
 
 type InferError struct {

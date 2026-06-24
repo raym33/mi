@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -226,6 +227,118 @@ func TestChatRoutesCapabilityHints(t *testing.T) {
 	}
 }
 
+func TestChatUsesCoordinatorMeasuredUsage(t *testing.T) {
+	market, err := city.New(config.CityConfig{
+		Enabled: true,
+		Consumers: []config.ConsumerAccount{{
+			ID:              "studio",
+			TotalTokenLimit: 1000,
+			APIKeys:         []string{"sk-test"},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	settlements, err := settlement.New(config.SettlementConfig{Enabled: true, PricePerThousandTokensMicros: 1000, ProviderRewardShareBPS: 7000})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"llama3.1:8b"}, PrivacyMode: "private"}, maliciousUsageNodeConn{
+		content: "ok",
+		done:    protocol.InferDone{FinishReason: "stop", PromptTokens: 500000, OutputTokens: 500000},
+	})
+	s := &server{registry: registry, market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), settlement: settlements}
+	handler := s.requireConsumerQuota(s.chatCompletions)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{
+		"model": "llama3.1:8b",
+		"max_tokens": 8,
+		"messages": [{"role": "user", "content": "hello"}]
+	}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var response openai.ChatCompletionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v: %s", err, rec.Body.String())
+	}
+	if response.Usage.PromptTokens != 3 || response.Usage.CompletionTokens != 1 || response.Usage.TotalTokens != 4 {
+		t.Fatalf("usage = %+v, want coordinator-estimated 3/1/4", response.Usage)
+	}
+	consumerStatus := market.ConsumerStatus("studio")
+	if consumerStatus.Usage.TotalTokens != 4 {
+		t.Fatalf("market usage = %+v, want total 4 not node-reported inflation", consumerStatus.Usage)
+	}
+	settlementSnapshot := settlements.Snapshot(10)
+	if settlementSnapshot.Events != 1 || len(settlementSnapshot.RecentEvents) != 1 || settlementSnapshot.RecentEvents[0].TotalTokens != 4 {
+		t.Fatalf("settlement = %+v, want one event with total tokens 4", settlementSnapshot)
+	}
+}
+
+func TestChatRoutesAroundLowReputationProvider(t *testing.T) {
+	market, err := city.New(config.CityConfig{
+		Enabled: true,
+		Consumers: []config.ConsumerAccount{{
+			ID:      "studio",
+			APIKeys: []string{"sk-test"},
+		}},
+		Providers: []config.ProviderAccount{
+			{ID: "provider-shaky"},
+			{ID: "provider-trusted"},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("new market: %v", err)
+	}
+	settlements, err := settlement.New(config.SettlementConfig{})
+	if err != nil {
+		t.Fatalf("new settlement: %v", err)
+	}
+	challenges, err := challenge.New(config.ChallengeConfig{Enabled: true})
+	if err != nil {
+		t.Fatalf("new challenges: %v", err)
+	}
+	if _, err := challenges.Record(challenge.RecordInput{ProviderID: "provider-shaky", Challenge: "synthetic-inference:llama3.1:8b", Passed: false, Score: 0}); err != nil {
+		t.Fatalf("record challenge: %v", err)
+	}
+	shaky := &scriptedProviderConn{content: "shaky"}
+	trusted := &scriptedProviderConn{content: "trusted"}
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{NodeID: "node-shaky", ProviderID: "provider-shaky", Models: []string{"llama3.1:8b"}}, shaky)
+	registry.Register(protocol.Register{NodeID: "node-trusted", ProviderID: "provider-trusted", Models: []string{"llama3.1:8b"}}, trusted)
+	s := &server{registry: registry, market: market, modelCatalog: modelcatalog.New(config.ModelConfig{}), settlement: settlements, challenges: challenges}
+	handler := s.requireConsumerQuota(s.chatCompletions)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{
+		"model": "llama3.1:8b",
+		"messages": [{"role": "user", "content": "hello"}]
+	}`))
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var response openai.ChatCompletionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v: %s", err, rec.Body.String())
+	}
+	if got := response.Choices[0].Message.Content; got != "trusted" {
+		t.Fatalf("content = %q, want trusted provider selected by reputation", got)
+	}
+	if shaky.calls != 0 || trusted.calls != 1 {
+		t.Fatalf("calls shaky=%d trusted=%d, want only trusted", shaky.calls, trusted.calls)
+	}
+}
+
 func TestRunSyntheticChallengeRecordsProviderEvidence(t *testing.T) {
 	market, err := city.New(config.CityConfig{}, nil)
 	if err != nil {
@@ -262,6 +375,27 @@ func TestRunSyntheticChallengeRecordsProviderEvidence(t *testing.T) {
 	}
 	if snapshot := challenges.Snapshot(10); snapshot.Events != 1 || len(snapshot.Summaries) != 1 || snapshot.Summaries[0].PassRateBPS != 10000 {
 		t.Fatalf("snapshot = %+v, want one perfect summary", snapshot)
+	}
+}
+
+func TestSyntheticChallengeUsesOpaqueRequestID(t *testing.T) {
+	challenges, err := challenge.New(config.ChallengeConfig{Enabled: true})
+	if err != nil {
+		t.Fatalf("new challenges: %v", err)
+	}
+	conn := &recordRequestIDConn{content: "mi-ok"}
+	registry := scheduler.NewRegistry()
+	registry.Register(protocol.Register{NodeID: "node-a", ProviderID: "provider-a", Models: []string{"llama3.1:8b"}, PrivacyMode: "public"}, conn)
+	s := &server{registry: registry, challenges: challenges}
+
+	if _, err := s.runSyntheticChallenge(context.Background(), config.ChallengeConfig{Model: "llama3.1:8b", ExpectedContains: "mi-ok"}); err != nil {
+		t.Fatalf("run challenge: %v", err)
+	}
+	if strings.HasPrefix(conn.requestID, "challenge-") {
+		t.Fatalf("challenge request id = %q, should be opaque", conn.requestID)
+	}
+	if !strings.HasPrefix(conn.requestID, "chatcmpl-") {
+		t.Fatalf("challenge request id = %q, want normal chat-shaped id", conn.requestID)
 	}
 }
 
@@ -348,6 +482,62 @@ func (c challengeNodeConn) SendInference(_ context.Context, _ string, _ protocol
 }
 
 func (c challengeNodeConn) Close() error {
+	return nil
+}
+
+type scriptedProviderConn struct {
+	content string
+	calls   int
+}
+
+func (c *scriptedProviderConn) SendInference(_ context.Context, _ string, _ protocol.InferRequest, sink scheduler.StreamSink) (protocol.InferDone, error) {
+	c.calls++
+	if c.content != "" {
+		if err := sink.Chunk(c.content); err != nil {
+			return protocol.InferDone{}, err
+		}
+	}
+	return protocol.InferDone{FinishReason: "stop", PromptTokens: 1, OutputTokens: 1}, nil
+}
+
+func (c *scriptedProviderConn) Close() error {
+	return nil
+}
+
+type maliciousUsageNodeConn struct {
+	content string
+	done    protocol.InferDone
+}
+
+func (c maliciousUsageNodeConn) SendInference(_ context.Context, _ string, _ protocol.InferRequest, sink scheduler.StreamSink) (protocol.InferDone, error) {
+	if c.content != "" {
+		if err := sink.Chunk(c.content); err != nil {
+			return protocol.InferDone{}, err
+		}
+	}
+	return c.done, nil
+}
+
+func (c maliciousUsageNodeConn) Close() error {
+	return nil
+}
+
+type recordRequestIDConn struct {
+	requestID string
+	content   string
+}
+
+func (c *recordRequestIDConn) SendInference(_ context.Context, requestID string, _ protocol.InferRequest, sink scheduler.StreamSink) (protocol.InferDone, error) {
+	c.requestID = requestID
+	if c.content != "" {
+		if err := sink.Chunk(c.content); err != nil {
+			return protocol.InferDone{}, err
+		}
+	}
+	return protocol.InferDone{FinishReason: "stop", PromptTokens: 1, OutputTokens: 1}, nil
+}
+
+func (c *recordRequestIDConn) Close() error {
 	return nil
 }
 

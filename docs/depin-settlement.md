@@ -14,7 +14,7 @@ For every successful inference, the coordinator can append one settlement event:
 - node ID
 - model alias
 - privacy tier
-- prompt, completion, and total tokens
+- prompt, completion, and total tokens estimated by the coordinator
 - latency and dispatch attempts
 - consumer debit in micros
 - provider reward in micros
@@ -23,6 +23,8 @@ For every successful inference, the coordinator can append one settlement event:
 - current event hash
 
 Prompt bodies are not recorded.
+
+The coordinator does not use worker-reported token counts for accounting. It estimates prompt usage from the request it received and completion usage from streamed chunks it relayed. This prevents a provider node from simply inflating `prompt_tokens` or `completion_tokens` in its final `done` message. The current estimate is intentionally simple and should be replaced by model-family tokenizers before real money settlement.
 
 ## Hash-chain design
 
@@ -57,7 +59,7 @@ Fields:
 - `target_latency_ms`: soft SLA target for successful requests.
 - `latency_penalty_bps`: provider reward reduction when a successful request exceeds the target latency.
 
-Example: if total tokens are `1000`, price is `1000` micros, and provider share is `7000`, the consumer debit is `1000` micros and the base provider reward is `700` micros. If the request exceeds `target_latency_ms` and `latency_penalty_bps` is `1000`, the provider reward is reduced by 10%.
+Example: if coordinator-estimated total tokens are `1000`, price is `1000` micros, and provider share is `7000`, the consumer debit is `1000` micros and the base provider reward is `700` micros. If the request exceeds `target_latency_ms` and `latency_penalty_bps` is `1000`, the provider reward is reduced by 10%.
 
 ## Admin endpoints
 
@@ -108,6 +110,9 @@ The first reputation model uses objective local signals:
 - total served tokens
 - accrued provider rewards
 - disabled provider state
+- benchmark challenge pass rate and score
+
+The coordinator refreshes provider scores before chat dispatch and synthetic challenges. The scheduler uses those scores as a routing penalty, so providers with weak challenge history, error streaks, cooldowns, or penalties are less likely to receive traffic when healthier eligible providers exist.
 
 This is intentionally off-chain and explainable. Later versions can add benchmarking, signed attestations, challenge jobs, staking, slashing, and public dashboards.
 
@@ -182,7 +187,7 @@ curl http://localhost:8080/admin/challenges/verify \
   -H 'Authorization: Bearer admin-dev-token'
 ```
 
-Challenge summaries feed provider reputation. Providers with weak pass rates or low challenge scores receive lower reputation until their later performance improves. When `provider_id` is omitted, the synthetic runner rotates across eligible providers instead of always testing the cheapest current node. Synthetic challenge records store pass/fail, score, node, provider, latency, and hash links, not model output.
+Challenge summaries feed provider reputation. Providers with weak pass rates or low challenge scores receive lower reputation until their later performance improves. When `provider_id` is omitted, the synthetic runner rotates across eligible providers instead of always testing the cheapest current node. Synthetic challenge requests use normal chat-shaped request IDs instead of a visible `challenge-` prefix. Synthetic challenge records store pass/fail, score, node, provider, latency, and hash links, not model output.
 
 ## Integrity anchor
 
@@ -197,7 +202,7 @@ The response includes settlement verification, challenge verification, event cou
 
 ## Payment roadmap
 
-The current settlement layer is payment-ready accounting, not a payment processor.
+The current settlement layer is cooperative accounting, not a payment processor or trustless proof-of-inference system.
 
 Recommended path:
 

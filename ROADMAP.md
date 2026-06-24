@@ -13,12 +13,15 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 - Quota reservations for concurrent requests.
 - Hash-chained settlement events for consumer debits and provider rewards.
 - Provider reputation from node health, cooldowns, completed events, tokens, and rewards.
+- Reputation-aware provider routing.
 - Tamper-evident benchmark challenge events feeding provider reputation.
 - Optional synthetic benchmark runner for automatic provider evidence.
+- Coordinator-estimated usage accounting instead of worker-reported token billing.
 - Per-provider challenge rotation so quiet nodes are tested regularly.
 - Combined settlement and challenge integrity manifest for external anchoring.
 - Persistent local usage ledger.
 - HTTPS/WSS and node mTLS.
+- WebSocket protocol version fields for gradual node upgrades.
 - Scheduler failover before first token.
 - Cooldowns for unstable nodes.
 - Coordinator-enforced privacy tiers for private, community, and public rented compute.
@@ -28,7 +31,9 @@ This roadmap is intentionally practical. `mi` should become the simplest way to 
 ## Next
 
 - Prometheus metrics for requests, tokens, nodes, errors, cooldowns, and provider usage.
+- Observed TTFT, tokens/sec, p95 latency, error-rate, and uptime in scheduler scoring.
 - Pricing rules per model, provider, and privacy tier.
+- Model-family tokenizers for exact coordinator-side accounting.
 - Provider payout reports and invoice exports.
 - Optional on-chain anchoring transaction helper.
 - Benchmark-driven reputation, challenge jobs, and slashing/dispute flows.
