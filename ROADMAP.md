@@ -53,6 +53,8 @@ Settlement and integrity:
 - Combined settlement and challenge integrity manifest.
 - External anchoring path through `/admin/integrity`.
 - Minimal built-in admin dashboard for operators.
+- All-time provider payout CSV export.
+- Prometheus-style `/admin/metrics` endpoint for operator scraping.
 
 Security and privacy:
 
@@ -75,7 +77,7 @@ Heterogeneous groundwork:
 These are the highest-leverage product steps for a real pilot:
 
 - Deeper admin dashboard workflows for enrollment, payout review, and challenge operations.
-- Prometheus metrics for requests, tokens, latency, TTFT, throughput, errors, cooldowns, and provider usage.
+- Richer metrics for request rates, token rates, p95 latency, TTFT, throughput, errors, cooldown windows, and provider usage windows.
 - Uptime windows and p95 latency windows in scheduler scoring.
 - One-command provider enrollment links or QR codes.
 - macOS LaunchAgent installer for always-on nodes.

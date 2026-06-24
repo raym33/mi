@@ -61,6 +61,7 @@ Settlement and reputation:
 - Optional benchmark challenge chain and synthetic challenge runner.
 - `/admin/integrity` exports an anchor hash over settlement and challenge verification state.
 - `/admin/dashboard` serves a minimal operator dashboard for nodes, health, usage, rewards, cloud-savings estimates, integrity, and reputation.
+- `/admin/metrics` exposes Prometheus-style operator metrics for nodes, settlement, and challenges.
 
 Security and privacy controls:
 
@@ -320,7 +321,10 @@ The TLS city example also enables node mTLS for `/ws/node`.
 
 - [City Network Mode](docs/city-network.md): accounts, provider join flow, quotas, usage, privacy tiers, and admin operations.
 - [DePIN Settlement And Rewards](docs/depin-settlement.md): cooperative accounting, hash chains, rewards, reputation, challenges, and anchoring.
+- [Metrics](docs/metrics.md): Prometheus-style admin metrics for coordinator operations.
+- [Provider Payout CSV](docs/payouts.md): all-time provider payout export for cooperative settlement review.
 - [Renting Compute Privately](docs/rental-privacy.md): how to rent public capacity while keeping private requests on trusted nodes.
+- [Backups And Integrity](docs/backups.md): state files to back up, backup helper, and integrity anchor publishing.
 - [Security](docs/security.md): TLS/mTLS, auth layers, privacy limits, and settlement integrity.
 - [Design](docs/design.md): request flow, scheduler behavior, protocol metadata, and heterogeneous routing.
 - [Android And Xiaomi Roadmap](docs/android-xiaomi.md): future Snapdragon, Xiaomi, QNN, LiteRT, and Android agent strategy.
