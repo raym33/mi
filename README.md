@@ -1,24 +1,25 @@
 # mi
 
-Local-first distributed inference for Macs now, and heterogeneous edge compute later.
+A private, OpenAI-compatible AI gateway for your team — running on your own machines.
 
-`mi` turns a group of provider machines into one OpenAI-compatible inference endpoint. The first working target is Apple Silicon Macs running Ollama. The control plane is also being prepared for mixed fleets: Apple Silicon, Linux, Windows, CUDA servers, Snapdragon devices, and Android/Xiaomi nodes.
+`mi` pools the computers you already have (Apple Silicon Macs running Ollama) into **one OpenAI-compatible endpoint** your tools can point at. You get per-user API keys, quotas, usage visibility, and routing that keeps sensitive prompts on trusted machines — without sending anything to a third-party API. Provider machines connect **outbound**, so they work behind NAT with no inbound ports to open.
 
-The project is an MVP, not a hosted marketplace. It already contains the core pieces needed to run a small private or community inference network: coordinator, outbound node agents, OpenAI-compatible chat completions, scheduling, account management, quotas, usage accounting, privacy tiers, SQLite/WAL persistence, TLS/mTLS examples, and tamper-evident settlement logs.
+It is a focused, self-hostable gateway, not a hosted service and not a token network. Stand it up for an office, studio, lab, school, or clinic in about 15 minutes.
 
 ## What Problem It Solves
 
-Small teams, schools, coworking spaces, agencies, clinics, and local communities often have underused machines but do not want to operate cloud GPU infrastructure or send every prompt to a third-party API.
+A small team has capable machines sitting idle and tools that speak the OpenAI API, but doesn't want to run cloud GPUs or send every prompt to an external provider.
 
 `mi` gives them:
 
-- One local API endpoint for many machines.
-- OpenAI-style `/v1/chat/completions` for existing tools.
-- Private routing for sensitive work on trusted nodes.
-- Public/community routing for non-sensitive work on shared or rented capacity.
-- Quotas and usage visibility per consumer.
-- Provider accounting for internal credits, invoices, or future payouts.
-- A migration path from "my Macs" to a city-scale compute cooperative.
+- **One endpoint for many machines** — drop-in `/v1/chat/completions` and `/v1/embeddings`, so existing OpenAI-compatible tools work unchanged.
+- **Per-user accounts** — API keys, token quotas, and usage visibility per consumer.
+- **Privacy by routing** — keep sensitive work on trusted (`private`) machines; only non-sensitive work goes to shared (`public`) ones.
+- **No open ports** — nodes dial out over WebSocket; ideal for laptops/desktops behind NAT.
+- **Operator-friendly** — built-in admin dashboard, Prometheus metrics, graceful shutdown, SQLite/WAL state with backups, TLS/mTLS.
+- **Optional usage accounting** — a tamper-evident, per-request usage log you can use for internal cost-sharing or invoicing. It is cooperative accounting, not a payment system; `mi` does not move money.
+
+Try it with no Ollama in one command: `make demo` (see below).
 
 ## Implemented Today
 
@@ -93,7 +94,7 @@ Be precise about the current trust model:
 - Privacy tiers control where prompts are routed; they do not make prompts cryptographically invisible to the machine doing inference.
 - Ollama is the only implemented backend today.
 - MLX, Android, Snapdragon/QNN, LiteRT, CUDA, Linux, and Windows support are roadmap targets, not production backends in this repo yet.
-- There is no web dashboard yet; admin visibility is through JSON endpoints.
+- It is a single coordinator per deployment: no built-in high availability (back up the state and restore on a standby).
 
 ## Architecture
 
@@ -339,7 +340,7 @@ The TLS city example also enables node mTLS for `/ws/node`.
 
 - [Production Deployment Runbook](docs/deployment.md): step-by-step instructions to run `mi` in production (coordinator + nodes, Tailscale/TLS, systemd/launchd, accounts, backups, monitoring).
 - [City Network Mode](docs/city-network.md): accounts, provider join flow, quotas, usage, privacy tiers, and admin operations.
-- [DePIN Settlement And Rewards](docs/depin-settlement.md): cooperative accounting, hash chains, rewards, reputation, challenges, and anchoring.
+- [Usage Accounting And Reputation](docs/depin-settlement.md): optional tamper-evident usage log, hash chains, reputation, challenges, and anchoring (cooperative accounting, not payments).
 - [Metrics](docs/metrics.md): Prometheus-style admin metrics for coordinator operations.
 - [Provider Payout CSV](docs/payouts.md): all-time provider payout export for cooperative settlement review.
 - [Renting Compute Privately](docs/rental-privacy.md): how to rent public capacity while keeping private requests on trusted nodes.
