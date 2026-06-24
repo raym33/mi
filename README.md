@@ -30,6 +30,7 @@ Core API:
 - `GET /v1/me`
 - OpenAI-style streaming Server-Sent Events.
 - Stable model aliases such as `fast` or `private` mapped to concrete backend models.
+- `Idempotency-Key` replay protection for non-streaming chat retries.
 
 Coordinator and nodes:
 
@@ -206,6 +207,7 @@ City mode writes:
 
 - `data/mi-city.db` for consumers, providers, hashed secrets, quotas, and usage.
 - `data/mi-settlement.db` for settlement events.
+- `data/mi-idempotency.db` for non-streaming chat idempotency records.
 - `data/challenge-chain.jsonl` for benchmark challenge evidence.
 
 ## Accounts And Enrollment
