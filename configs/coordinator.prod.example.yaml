@@ -1,0 +1,59 @@
+# Production coordinator config (one coordinator per trusted community).
+# Copy to /etc/mi/coordinator.yaml and edit the REPLACE_ values.
+# See docs/deployment.md.
+
+listen_addr: ":8080" # bind to the tailnet/loopback; expose via Tailscale or a TLS proxy, not the open internet
+
+# Strong random admin token. Generate with: openssl rand -hex 32
+# Never leave empty and never set dev_admin_open in production.
+admin_token: "REPLACE_WITH_OPENSSL_RAND_HEX_32"
+dev_admin_open: false
+
+city:
+  enabled: true # REQUIRED in production, otherwise the API is open (local mode)
+  name: "Your Community"
+  require_provider_tokens: true # nodes must present a provider token to register
+  sqlite_path: "/var/lib/mi/mi-city.db"
+  # Do NOT hardcode consumers/providers here in production. Create them at
+  # runtime with the admin API (POST /admin/providers, POST /admin/consumers)
+  # so their secrets never live in git. See docs/deployment.md step 3.
+
+settlement:
+  enabled: true
+  sqlite_path: "/var/lib/mi/mi-settlement.db"
+  price_per_thousand_tokens_micros: 1000 # cooperative accounting unit, not money movement
+  provider_reward_share_bps: 7000
+  target_latency_ms: 5000
+  latency_penalty_bps: 1000
+
+idempotency:
+  sqlite_path: "/var/lib/mi/mi-idempotency.db"
+  ttl: "24h"
+
+challenges:
+  enabled: true
+  path: "/var/lib/mi/challenge-chain.jsonl"
+  auto_run: true
+  interval: "15m"
+  timeout: "30s"
+  privacy_tier: "public"
+  prompt: "Reply with exactly: mi-ok"
+  expected_contains: "mi-ok"
+  max_tokens: 8
+  model: "llama3.1:8b" # must match a model your nodes actually serve
+
+models:
+  aliases:
+    - id: "fast"
+      target: "llama3.1:8b"
+      display_name: "Fast local"
+    - id: "private"
+      target: "llama3.1:8b"
+      display_name: "Private local"
+
+# Only needed if you expose the coordinator publicly instead of over Tailscale.
+# Terminate TLS here and require node mTLS:
+# tls:
+#   cert_file: "/etc/mi/tls/server.crt"
+#   key_file: "/etc/mi/tls/server.key"
+#   node_client_ca_file: "/etc/mi/tls/ca.crt"
